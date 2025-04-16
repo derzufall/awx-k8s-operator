@@ -10,7 +10,7 @@ spec:
     plural: awxinstances
     singular: awxinstance
     shortNames:
-    - awx
+    - awxinst
   scope: Namespaced
   versions:
   - name: v1alpha1
