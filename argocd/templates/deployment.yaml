@@ -33,7 +33,7 @@ spec:
         image: "{{ .Values.operator.image.registry }}/{{ .Values.operator.image.repository }}:{{ .Values.operator.image.tag }}"
         imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
         args:
-        - --leader-elect
+        - --leader-elect={{ .Values.leaderElection | default "true" }}
         - --health-probe-bind-address=:8081
         - --metrics-bind-address=:8080
         env:

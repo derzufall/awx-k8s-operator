@@ -23,6 +23,9 @@ operator:
 namespace: awx-operator-system
 createNamespace: true
 
+# Leader election settings
+leaderElection: true
+
 # ArgoCD application settings
 argocd:
   project: default

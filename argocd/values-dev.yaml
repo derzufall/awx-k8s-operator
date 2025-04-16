@@ -25,6 +25,7 @@ createNamespace: true
 
 # Development settings
 replicas: 1
+leaderElection: false
 
 # ArgoCD application settings
 argocd:

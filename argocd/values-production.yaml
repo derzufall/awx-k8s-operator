@@ -22,6 +22,7 @@ operator:
 # High availability settings for production
 replicas: 2
 podAntiAffinity: true
+leaderElection: true
 
 # Namespace settings
 namespace: awx-operator-system

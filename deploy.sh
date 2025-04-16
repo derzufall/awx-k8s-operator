@@ -96,6 +96,9 @@ operator:
 namespace: ${NAMESPACE}
 createNamespace: true
 
+# Leader election settings
+leaderElection: true
+
 # ArgoCD application settings
 argocd:
   project: default
