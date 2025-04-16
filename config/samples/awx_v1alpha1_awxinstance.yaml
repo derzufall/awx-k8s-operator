@@ -1,0 +1,56 @@
+apiVersion: awx.example.com/v1alpha1
+kind: AWXInstance
+metadata:
+  name: awx-sample
+spec:
+  adminUser: admin
+  adminPassword: adminpw123
+  adminEmail: admin@example.com
+  hostname: awx.example.com
+  replicas: 1
+  projects:
+    - name: Sample Project
+      description: Ansible playbooks for sample configuration
+      scmType: git
+      scmUrl: https://github.com/example/ansible-playbooks.git
+      scmBranch: main
+  inventories:
+    - name: Production
+      description: Production servers
+      variables: |
+        ---
+        ansible_connection: ssh
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+      hosts:
+        - name: web01.example.com
+          variables: |
+            ---
+            ansible_host: 192.168.1.101
+            ansible_user: ansible
+        - name: web02.example.com
+          variables: |
+            ---
+            ansible_host: 192.168.1.102
+            ansible_user: ansible
+    - name: Development
+      description: Development servers
+      hosts:
+        - name: dev.example.com
+          variables: |
+            ---
+            ansible_host: 192.168.2.101
+            ansible_user: devuser
+  jobTemplates:
+    - name: Update Webservers
+      description: Update web server configuration
+      projectName: Sample Project
+      inventoryName: Production
+      playbook: webservers.yml
+      extraVars: |
+        ---
+        deploy_version: 1.2.3
+    - name: Deploy Application
+      description: Deploy application to development
+      projectName: Sample Project
+      inventoryName: Development
+      playbook: deploy.yml 

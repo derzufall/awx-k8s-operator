@@ -1,0 +1,32 @@
+operator:
+  image:
+    registry: quay.io
+    repository: myuser/awx-operator
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  
+  reconciliation:
+    period: 60  # in seconds
+  
+  logs:
+    level: info
+
+# Namespace settings
+namespace: awx-operator-system
+createNamespace: true
+
+# ArgoCD application settings
+argocd:
+  project: default
+  server: https://kubernetes.default.svc
+  automated:
+    prune: true
+    selfHeal: true 

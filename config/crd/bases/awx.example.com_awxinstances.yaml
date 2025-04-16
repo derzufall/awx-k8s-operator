@@ -1,0 +1,222 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: awxinstances.awx.example.com
+spec:
+  group: awx.example.com
+  names:
+    kind: AWXInstance
+    listKind: AWXInstanceList
+    plural: awxinstances
+    singular: awxinstance
+    shortNames:
+    - awx
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Hostname
+      type: string
+      jsonPath: .spec.hostname
+    - name: Ready
+      type: string
+      jsonPath: .status.conditions[?(@.type=='Ready')].status
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        description: AWXInstance is the Schema for the awxinstances API
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: AWXInstanceSpec defines the desired state of AWXInstance
+            type: object
+            required:
+            - adminUser
+            - adminPassword
+            - adminEmail
+            - hostname
+            properties:
+              adminUser:
+                description: AdminUser is the AWX admin username
+                type: string
+              adminPassword:
+                description: AdminPassword is the AWX admin password
+                type: string
+                minLength: 5
+              adminEmail:
+                description: AdminEmail is the AWX admin email
+                type: string
+                format: email
+              hostname:
+                description: Hostname is the hostname to access AWX UI
+                type: string
+              replicas:
+                description: Replicas is the number of AWX workers to deploy
+                type: integer
+                format: int32
+                minimum: 1
+                default: 1
+              projects:
+                description: Projects defines the AWX projects to create
+                type: array
+                items:
+                  type: object
+                  required:
+                  - name
+                  properties:
+                    name:
+                      description: Name is the project name
+                      type: string
+                    description:
+                      description: Description of the project
+                      type: string
+                    scmType:
+                      description: SCMType is the source control type (git, svn, etc)
+                      type: string
+                      enum:
+                      - git
+                      - svn
+                      - manual
+                      default: git
+                    scmUrl:
+                      description: SCMUrl is the source control URL
+                      type: string
+                    scmBranch:
+                      description: SCMBranch is the source control branch
+                      type: string
+                      default: main
+                    scmCredential:
+                      description: SCMCredential is the name of the credential to use for SCM
+                      type: string
+              inventories:
+                description: Inventories defines the AWX inventories to create
+                type: array
+                items:
+                  type: object
+                  required:
+                  - name
+                  properties:
+                    name:
+                      description: Name is the inventory name
+                      type: string
+                    description:
+                      description: Description of the inventory
+                      type: string
+                    variables:
+                      description: Variables is the inventory variables in YAML format
+                      type: string
+                    hosts:
+                      description: Hosts defines the hosts in this inventory
+                      type: array
+                      items:
+                        type: object
+                        required:
+                        - name
+                        properties:
+                          name:
+                            description: Name is the host name
+                            type: string
+                          description:
+                            description: Description of the host
+                            type: string
+                          variables:
+                            description: Variables is the host variables in YAML format
+                            type: string
+              jobTemplates:
+                description: JobTemplates defines the AWX job templates to create
+                type: array
+                items:
+                  type: object
+                  required:
+                  - name
+                  - projectName
+                  - inventoryName
+                  - playbook
+                  properties:
+                    name:
+                      description: Name is the job template name
+                      type: string
+                    description:
+                      description: Description of the job template
+                      type: string
+                    projectName:
+                      description: ProjectName is the name of the project this job template belongs to
+                      type: string
+                    inventoryName:
+                      description: InventoryName is the name of the inventory this job template uses
+                      type: string
+                    playbook:
+                      description: Playbook is the name of the playbook to run
+                      type: string
+                    extraVars:
+                      description: ExtraVars is the extra variables for the job template in YAML format
+                      type: string
+          status:
+            description: AWXInstanceStatus defines the observed state of AWXInstance
+            type: object
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations of the AWXInstance's state
+                type: array
+                items:
+                  description: "Condition contains details for one aspect of the current state of this API Resource."
+                  type: object
+                  required:
+                  - status
+                  - type
+                  properties:
+                    lastTransitionTime:
+                      description: lastTransitionTime is the last time the condition transitioned from one status to another.
+                      type: string
+                      format: date-time
+                    message:
+                      description: message is a human readable message indicating details about the transition.
+                      type: string
+                    observedGeneration:
+                      description: observedGeneration represents the .metadata.generation that the condition was set based upon.
+                      type: integer
+                      format: int64
+                    reason:
+                      description: reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      type: string
+                    type:
+                      description: type of condition in CamelCase.
+                      type: string
+              projectStatuses:
+                description: ProjectStatuses contains the reconciliation status of each project
+                type: object
+                additionalProperties:
+                  type: string
+              inventoryStatuses:
+                description: InventoryStatuses contains the reconciliation status of each inventory
+                type: object
+                additionalProperties:
+                  type: string
+              jobTemplateStatuses:
+                description: JobTemplateStatuses contains the reconciliation status of each job template
+                type: object
+                additionalProperties:
+                  type: string 

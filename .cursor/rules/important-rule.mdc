@@ -1,0 +1,7 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+Always fix all errors at the end of each modification of the source code.
+Always clean up unused code or files.
