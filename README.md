@@ -110,29 +110,51 @@ Apply it with:
 kubectl apply -f example-awx.yaml
 ```
 
-## State Reconciliation
+## Managing an Existing AWX Instance
 
-The operator maintains the desired state of AWX resources through two mechanisms:
+You can use this operator to manage an existing AWX instance that was deployed using the official AWX operator or by other means:
 
-1. **Resource Watch**: The operator watches for changes to AWXInstance resources and ensures that the AWX state always matches the configured state.
+```yaml
+# existing-awx.yaml
+apiVersion: awx.ansible.com/v1alpha1
+kind: AWXInstance
+metadata:
+  name: existing-awx
+spec:
+  hostname: awx.example.com
+  protocol: https  # Optional: can be 'http' or 'https' (defaults to https)
+  adminUser: admin
+  adminPassword: yourpassword
+  adminEmail: admin@example.com
+  externalInstance: true  # This indicates we're connecting to an existing instance
+  
+  # Define resources to manage (projects, inventories, job templates)
+  projects:
+    - name: My Project
+      scmType: git
+      scmUrl: https://github.com/example/ansible-playbooks.git
+```
 
-2. **Internal State Check**: Every 60 seconds (configurable via `operator.reconciliation.period` in values.yaml), the operator checks if the state was changed internally within AWX. If any deviation is detected, the operator automatically corrects the changes to match the desired state specified in the AWXInstance resource.
+For HTTP connections (if your AWX instance doesn't use HTTPS):
 
-This ensures that even if changes are made directly in the AWX UI or API, the operator will detect and revert those changes to maintain the desired configuration.
+```yaml
+# http-awx-instance.yaml
+apiVersion: awx.ansible.com/v1alpha1
+kind: AWXInstance
+metadata:
+  name: my-existing-awx
+  namespace: awx-operator-system
+spec:
+  hostname: awx.example.com  # Your AWX host
+  protocol: http  # Use HTTP if your AWX uses HTTP
+  adminUser: admin
+  adminPassword: yourpassword
+  adminEmail: admin@example.com
+  externalInstance: true  # Important - indicates this is an existing instance
+```
 
-## Development
+Apply it with:
 
-To make changes to the operator:
-
-1. Modify the controller code
-2. Build and push a new image
-3. Update the deployment with the new image
-4. Deploy the updated operator
-
-## Troubleshooting
-
-If you encounter issues:
-
-- Check the operator logs: `kubectl logs -l control-plane=controller-manager -n awx-operator-system`
-- Verify CRDs are installed: `kubectl get crds | grep awx`
-- Ensure RBAC permissions are correct: `kubectl get clusterrole,clusterrolebinding -l control-plane=controller-manager` 
+```bash
+kubectl apply -f your-awx-instance.yaml
+```

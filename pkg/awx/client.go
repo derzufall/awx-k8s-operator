@@ -2,6 +2,7 @@ package awx
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -185,4 +186,43 @@ func (c *Client) FindObjectByName(endpoint, name string) (map[string]interface{}
 	}
 
 	return objects[0], nil
+}
+
+// TestConnection tests the connection to the AWX instance
+func (c *Client) TestConnection() error {
+	// Make a request to the /api/ endpoint to check if the connection works
+	endpoint := fmt.Sprintf("%s/api/", c.baseURL)
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add basic auth
+	req.SetBasicAuth(c.username, c.password)
+
+	// Create a client with appropriate TLS configuration based on the protocol
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	// If using HTTPS, configure TLS
+	if u, err := url.Parse(c.baseURL); err == nil && u.Scheme == "https" {
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, // For testing; consider proper TLS verification in production
+			},
+		}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to connect to AWX: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	return nil
 }

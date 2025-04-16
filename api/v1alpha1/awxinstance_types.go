@@ -24,6 +24,16 @@ type AWXInstanceSpec struct {
 	// +kubebuilder:validation:Required
 	Hostname string `json:"hostname"`
 
+	// Protocol is the protocol to use for the AWX connection (http or https)
+	// +kubebuilder:validation:Enum=http;https
+	// +kubebuilder:default=https
+	// +optional
+	Protocol string `json:"protocol,omitempty"`
+
+	// ExternalInstance indicates this is an existing AWX instance that should be managed but not created
+	// +optional
+	ExternalInstance bool `json:"externalInstance,omitempty"`
+
 	// Replicas is the number of AWX workers to deploy
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:default=1

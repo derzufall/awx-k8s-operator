@@ -1,0 +1,23 @@
+apiVersion: awx.ansible.com/v1alpha1
+kind: AWXInstance
+metadata:
+  name: existing-awx-http
+  namespace: awx-operator-system
+spec:
+  # Connection details for your existing AWX instance
+  hostname: awx.example.com  # Replace with your actual AWX hostname
+  protocol: http  # Use HTTP instead of HTTPS
+  adminUser: admin
+  adminPassword: password123  # Replace with your actual admin password
+  adminEmail: admin@example.com
+  
+  # Indicate this is an existing instance
+  externalInstance: true
+  
+  # Define projects you want to manage in the existing AWX instance
+  projects:
+    - name: Sample Ansible Project
+      description: Sample project managed by the AWX operator
+      scmType: git
+      scmUrl: https://github.com/example/ansible-playbooks.git
+      scmBranch: main 

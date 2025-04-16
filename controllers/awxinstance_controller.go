@@ -102,10 +102,40 @@ func (r *AWXInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 	}
 
+	// Set the protocol, defaulting to https if not specified
+	protocol := "https"
+	if instance.Spec.Protocol != "" {
+		protocol = instance.Spec.Protocol
+	}
+
 	// Create AWX client
-	// Protocol, hostname and port should be customized based on your setup
-	baseURL := fmt.Sprintf("https://%s", instance.Spec.Hostname)
+	baseURL := fmt.Sprintf("%s://%s", protocol, instance.Spec.Hostname)
 	awxClient := awx.NewClient(baseURL, instance.Spec.AdminUser, instance.Spec.AdminPassword)
+
+	// Test connection to AWX
+	if err := r.testConnection(ctx, awxClient); err != nil {
+		logger.Error(err, "Failed to connect to AWX instance")
+
+		// If this is an external instance, we expect it to exist
+		if instance.Spec.ExternalInstance {
+			meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+				Type:               "Ready",
+				Status:             metav1.ConditionFalse,
+				LastTransitionTime: metav1.Now(),
+				Reason:             "ConnectionFailed",
+				Message:            fmt.Sprintf("Failed to connect to external AWX instance: %v", err),
+			})
+
+			if err := r.Status().Update(ctx, instance); err != nil {
+				logger.Error(err, "Failed to update AWXInstance status")
+			}
+
+			return ctrl.Result{RequeueAfter: time.Minute}, err
+		}
+
+		// For non-external instances, this may be expected during initial setup
+		logger.Info("AWX instance not available yet, will retry")
+	}
 
 	// Check and reconcile any differences from AWX internal state to the desired state
 	if changed, err := r.reconcileInternalChanges(ctx, instance, awxClient); err != nil {
@@ -280,8 +310,14 @@ func (r *AWXInstanceReconciler) finalizeAWXInstance(ctx context.Context, instanc
 	logger := log.FromContext(ctx)
 	logger.Info("Finalizing AWXInstance", "name", instance.Name)
 
+	// Set the protocol, defaulting to https if not specified
+	protocol := "https"
+	if instance.Spec.Protocol != "" {
+		protocol = instance.Spec.Protocol
+	}
+
 	// Create AWX client
-	baseURL := fmt.Sprintf("https://%s", instance.Spec.Hostname)
+	baseURL := fmt.Sprintf("%s://%s", protocol, instance.Spec.Hostname)
 	awxClient := awx.NewClient(baseURL, instance.Spec.AdminUser, instance.Spec.AdminPassword)
 
 	// Delete job templates first (as they depend on projects and inventories)
@@ -318,6 +354,22 @@ func (r *AWXInstanceReconciler) finalizeAWXInstance(ctx context.Context, instanc
 	}
 
 	logger.Info("Successfully finalized AWXInstance", "name", instance.Name)
+	return nil
+}
+
+// testConnection tests connectivity to the AWX instance
+func (r *AWXInstanceReconciler) testConnection(ctx context.Context, awxClient *awx.Client) error {
+	logger := log.FromContext(ctx)
+	logger.Info("Testing connection to AWX instance")
+
+	// Use the client's TestConnection method
+	err := awxClient.TestConnection()
+	if err != nil {
+		logger.Error(err, "Failed to connect to AWX instance")
+		return err
+	}
+
+	logger.Info("Successfully connected to AWX instance")
 	return nil
 }
 

@@ -70,6 +70,16 @@ spec:
               hostname:
                 description: Hostname is the hostname to access AWX UI
                 type: string
+              protocol:
+                description: Protocol is the protocol to use for the AWX connection (http or https)
+                type: string
+                enum:
+                - http
+                - https
+                default: https
+              externalInstance:
+                description: ExternalInstance indicates this is an existing AWX instance that should be managed but not created
+                type: boolean
               replicas:
                 description: Replicas is the number of AWX workers to deploy
                 type: integer
