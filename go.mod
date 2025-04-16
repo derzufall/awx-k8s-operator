@@ -1,4 +1,4 @@
-module github.com/yourusername/awx-operator
+module github.com/derzufall/awx-k8s-operator
 
 go 1.24.2
 

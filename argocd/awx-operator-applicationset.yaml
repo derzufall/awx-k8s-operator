@@ -17,20 +17,16 @@ spec:
                 - cluster: dev-cluster
                   url: https://dev-cluster-api.example.com
                   environment: development
-                # Add more clusters as needed
           
           # List of environments with their configurations
           - list:
               elements:
                 - environment: production
                   namespace: awx-operator-system
-                  valueFiles:
-                    - values-production.yaml
+                  values: values-production.yaml
                 - environment: development
                   namespace: awx-operator-dev
-                  valueFiles:
-                    - values-dev.yaml
-                # Add more environments as needed
+                  values: values-dev.yaml
   
   template:
     metadata:
@@ -41,27 +37,19 @@ spec:
     spec:
       project: default
       source:
-        repoURL: https://github.com/yourusername/awx-k8s-operator.git # Replace with your repo
+        repoURL: https://github.com/derzufall/awx-k8s-operator.git
         targetRevision: HEAD
         path: .
-        
-        # Kustomize configurations
-        kustomize:
-          images:
-            - '{{values.operator.image.registry}}/{{values.operator.image.repository}}:{{values.operator.image.tag}}'
-          
-          # Optional value overrides
-          commonLabels:
-            environment: '{{environment}}'
-          
-          # Pull values from values file
+        helm:
           valueFiles:
-            - '$path/argocd/{{valueFiles}}'
-      
+            - argocd/values.yaml
+            - argocd/{{values}}
+          parameters:
+            - name: namespace
+              value: '{{namespace}}'
       destination:
         server: '{{url}}'
         namespace: '{{namespace}}'
-      
       syncPolicy:
         automated:
           prune: true

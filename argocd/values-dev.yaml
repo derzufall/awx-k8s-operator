@@ -1,26 +1,35 @@
 operator:
   image:
     registry: quay.io
-    repository: myuser/awx-operator
-    tag: latest
+    repository: wolkenzentrale/awx-operator
+    tag: aed406c
     pullPolicy: Always
   
   resources:
     limits:
-      cpu: 300m
-      memory: 300Mi
+      cpu: 500m
+      memory: 512Mi
     requests:
-      cpu: 100m
-      memory: 128Mi
+      cpu: 200m
+      memory: 256Mi
   
   reconciliation:
-    period: 30  # faster reconciliation for dev/testing
+    period: 30  # faster reconciliation for development
   
   logs:
     level: debug  # more verbose logging for development
 
+# Namespace settings
+namespace: awx-operator-dev
+createNamespace: true
+
 # Development settings
 replicas: 1
 
-# Namespace settings
-namespace: awx-operator-dev 
+# ArgoCD application settings
+argocd:
+  project: default
+  server: https://kubernetes.default.svc
+  automated:
+    prune: true
+    selfHeal: true 

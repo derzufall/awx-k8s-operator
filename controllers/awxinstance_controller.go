@@ -30,8 +30,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	awxv1alpha1 "github.com/yourusername/awx-operator/api/v1alpha1"
-	"github.com/yourusername/awx-operator/pkg/awx"
+	awxv1alpha1 "github.com/derzufall/awx-k8s-operator/api/v1alpha1"
+	"github.com/derzufall/awx-k8s-operator/pkg/awx"
 )
 
 // AWXInstanceReconciler reconciles a AWXInstance object
@@ -40,9 +40,9 @@ type AWXInstanceReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-//+kubebuilder:rbac:groups=awx.example.com,resources=awxinstances,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=awx.example.com,resources=awxinstances/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=awx.example.com,resources=awxinstances/finalizers,verbs=update
+//+kubebuilder:rbac:groups=awx.ansible.com,resources=awxinstances,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=awx.ansible.com,resources=awxinstances/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=awx.ansible.com,resources=awxinstances/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -75,7 +75,7 @@ func (r *AWXInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// Define a finalizer to clean up AWX resources when the CR is deleted
-	awxFinalizer := "awx.example.com/finalizer"
+	awxFinalizer := "awx.ansible.com/finalizer"
 
 	// Check if the AWXInstance is being deleted
 	if instance.GetDeletionTimestamp() != nil {

@@ -33,8 +33,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	awxv1alpha1 "github.com/yourusername/awx-operator/api/v1alpha1"
-	"github.com/yourusername/awx-operator/controllers"
+	awxv1alpha1 "github.com/derzufall/awx-k8s-operator/api/v1alpha1"
+	"github.com/derzufall/awx-k8s-operator/controllers"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -73,7 +73,7 @@ func main() {
 		WebhookServer:          webhook.NewServer(webhook.Options{Port: 9443}),
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "77350c37.example.com",
+		LeaderElectionID:       "awx-operator.derzufall.github.io",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

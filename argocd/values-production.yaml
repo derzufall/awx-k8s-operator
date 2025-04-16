@@ -1,13 +1,13 @@
 operator:
   image:
     registry: quay.io
-    repository: myuser/awx-operator
-    tag: stable
-    pullPolicy: Always
+    repository: wolkenzentrale/awx-operator
+    tag: aed406c
+    pullPolicy: IfNotPresent
   
   resources:
     limits:
-      cpu: 1
+      cpu: 1000m
       memory: 1Gi
     requests:
       cpu: 500m
@@ -19,13 +19,18 @@ operator:
   logs:
     level: info
 
-# Production-specific patches
-patches:
-  # Add any production-specific patch files here
-  - patches/production/high-availability.yaml
-
 # High availability settings for production
 replicas: 2
+podAntiAffinity: true
 
 # Namespace settings
-namespace: awx-operator-system 
+namespace: awx-operator-system
+createNamespace: true
+
+# ArgoCD application settings
+argocd:
+  project: default
+  server: https://kubernetes.default.svc
+  automated:
+    prune: true
+    selfHeal: true 

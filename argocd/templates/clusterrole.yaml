@@ -3,13 +3,13 @@ kind: ClusterRole
 metadata:
   name: awx-operator-role
 rules:
-- apiGroups: ["awx.example.com"]
+- apiGroups: ["awx.ansible.com"]
   resources: ["awxinstances"]
-  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
-- apiGroups: ["awx.example.com"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["awx.ansible.com"]
   resources: ["awxinstances/status"]
-  verbs: ["get", "patch", "update"]
-- apiGroups: ["awx.example.com"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: ["awx.ansible.com"]
   resources: ["awxinstances/finalizers"]
   verbs: ["update"]
 - apiGroups: [""]

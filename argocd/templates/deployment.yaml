@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: awx-operator-controller-manager
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: awx-operator
+spec:
+  replicas: {{ .Values.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: awx-operator
+  template:
+    metadata:
+      labels:
+        app: awx-operator
+    spec:
+      {{- if .Values.podAntiAffinity }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: awx-operator
+              topologyKey: kubernetes.io/hostname
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: manager
+        image: "{{ .Values.operator.image.registry }}/{{ .Values.operator.image.repository }}:{{ .Values.operator.image.tag }}"
+        imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
+        args:
+        - --leader-elect
+        - --health-probe-bind-address=:8081
+        - --metrics-bind-address=:8080
+        env:
+        - name: RECONCILIATION_PERIOD
+          value: "{{ .Values.operator.reconciliation.period }}"
+        - name: LOG_LEVEL
+          value: "{{ .Values.operator.logs.level }}"
+        securityContext:
+          allowPrivilegeEscalation: false
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: {{ .Values.operator.resources.limits.cpu }}
+            memory: {{ .Values.operator.resources.limits.memory }}
+          requests:
+            cpu: {{ .Values.operator.resources.requests.cpu }}
+            memory: {{ .Values.operator.resources.requests.memory }}
+      serviceAccountName: awx-operator
+      terminationGracePeriodSeconds: 10 

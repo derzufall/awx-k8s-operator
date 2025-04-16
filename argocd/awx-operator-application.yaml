@@ -8,14 +8,21 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/yourusername/awx-k8s-operator.git  # Replace with your Git repo URL
+    repoURL: https://github.com/derzufall/awx-k8s-operator.git
     targetRevision: HEAD
     path: .
-    kustomize:
-      # You can add specific kustomize options here if needed
-      # For example, to set image parameters from ArgoCD:
-      images:
-        - quay.io/myuser/awx-operator:latest # This will be replaced by kustomize
+    helm:
+      valueFiles:
+        - argocd/values.yaml
+      parameters:
+        - name: operator.image.registry
+          value: quay.io
+        - name: operator.image.repository
+          value: wolkenzentrale/awx-operator
+        - name: operator.image.tag
+          value: aed406c
+        - name: operator.reconciliation.period
+          value: "60"
   destination:
     server: https://kubernetes.default.svc
     namespace: awx-operator-system

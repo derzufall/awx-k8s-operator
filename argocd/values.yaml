@@ -1,8 +1,8 @@
 operator:
   image:
     registry: quay.io
-    repository: myuser/awx-operator
-    tag: latest
+    repository: wolkenzentrale/awx-operator
+    tag: aed406c
     pullPolicy: IfNotPresent
   
   resources:

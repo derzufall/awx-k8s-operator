@@ -1,141 +1,116 @@
 #!/bin/bash
-set -e
 
 # Default values
-REGISTRY=${REGISTRY:-"quay.io/myuser"}
-IMAGE_NAME=${IMAGE_NAME:-"awx-operator"}
-TAG=${TAG:-"latest"}
-IMAGE="${REGISTRY}/${IMAGE_NAME}:${TAG}"
-NAMESPACE=${NAMESPACE:-"awx-operator-system"}
+REGISTRY=${REGISTRY:-quay.io/wolkenzentrale}
+IMAGE_NAME=${IMAGE_NAME:-awx-operator}
+TAG=${TAG:-aed406c}
+NAMESPACE=${NAMESPACE:-awx-operator-system}
 
-# Colors for output
+# Colors for better output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Helper functions
+# Function to print header
 print_header() {
-  echo -e "\n${GREEN}==== $1 ====${NC}\n"
+  echo -e "\n${BLUE}==== $1 ====${NC}\n"
 }
 
-print_error() {
-  echo -e "${RED}ERROR: $1${NC}"
-}
-
+# Function to print info
 print_info() {
-  echo -e "${YELLOW}INFO: $1${NC}"
+  echo -e "${GREEN}INFO:${NC} $1"
 }
 
+# Function to print error
+print_error() {
+  echo -e "${RED}ERROR:${NC} $1"
+}
+
+# Check prerequisites
 check_prerequisites() {
   print_header "Checking prerequisites"
-  
+
   # Check for Docker
   if ! command -v docker &> /dev/null; then
-    print_error "Docker is not installed"
+    print_error "Docker not found. Please install Docker first."
     exit 1
   fi
-  
+
   # Check for kubectl
   if ! command -v kubectl &> /dev/null; then
-    print_error "kubectl is not installed"
+    print_error "kubectl not found. Please install kubectl first."
     exit 1
   fi
-  
-  # Check for kustomize
-  if ! command -v kustomize &> /dev/null; then
-    print_info "kustomize not found, will use kubectl's built-in kustomize"
+
+  # Check for helm
+  if ! command -v helm &> /dev/null; then
+    print_error "helm not found. Please install Helm first."
+    exit 1
   fi
 
-  echo "Docker: $(docker --version)"
-  echo "kubectl: $(kubectl version --client --short)"
-  
-  print_info "Using image: ${IMAGE}"
+  print_info "All prerequisites satisfied"
 }
 
+# Build the operator image
 build() {
   print_header "Building operator image"
-  docker build -t "${IMAGE}" .
-  echo "Image built: ${IMAGE}"
+  docker build -t "${REGISTRY}/${IMAGE_NAME}:${TAG}" .
+  echo "Image built successfully: ${REGISTRY}/${IMAGE_NAME}:${TAG}"
 }
 
+# Push the operator image to the registry
 push() {
-  print_header "Pushing image to registry"
-  docker push "${IMAGE}"
-  echo "Image pushed: ${IMAGE}"
+  print_header "Pushing operator image"
+  docker push "${REGISTRY}/${IMAGE_NAME}:${TAG}"
+  echo "Image pushed successfully: ${REGISTRY}/${IMAGE_NAME}:${TAG}"
 }
 
-update_kustomization() {
-  print_header "Updating kustomization files"
+# Update Helm values file with image details
+update_values() {
+  print_header "Updating Helm values"
   
-  # Create root kustomization.yaml if it doesn't exist
-  if [ ! -f "kustomization.yaml" ]; then
-    cat > kustomization.yaml << EOF
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
+  cat > argocd/values.yaml << EOF
+operator:
+  image:
+    registry: ${REGISTRY}
+    repository: ${IMAGE_NAME}
+    tag: ${TAG}
+    pullPolicy: IfNotPresent
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  
+  reconciliation:
+    period: 60  # in seconds
+  
+  logs:
+    level: info
 
-# Points to the default kustomization which includes all needed components
-resources:
-- config/default
-
-# Namespace configuration
+# Namespace settings
 namespace: ${NAMESPACE}
+createNamespace: true
 
-# Image configuration - these will override the defaults in config/manager/kustomization.yaml
-images:
-- name: controller
-  newName: ${REGISTRY}/${IMAGE_NAME}
-  newTag: ${TAG}
-
-# Common labels for all resources
-commonLabels:
-  app.kubernetes.io/name: awx-operator
-  app.kubernetes.io/instance: awx-operator
-  app.kubernetes.io/part-of: awx-operator
-  app.kubernetes.io/managed-by: kustomize
-EOF
-  else
-    # Update only the image configuration in existing kustomization.yaml
-    # This is a bit complex with sed, so we'll use a temporary file
-    tmp_file=$(mktemp)
-    cat kustomization.yaml | 
-      sed -E "s|newName: .*|newName: ${REGISTRY}/${IMAGE_NAME}|g" | 
-      sed -E "s|newTag: .*|newTag: ${TAG}|g" |
-      sed -E "s|namespace: .*|namespace: ${NAMESPACE}|g" > $tmp_file
-    mv $tmp_file kustomization.yaml
-  fi
-  
-  # Create manager resources patch directory if it doesn't exist
-  mkdir -p patches
-
-  # Create or update manager resources patch
-  cat > patches/manager_resources.yaml << EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: awx-operator-controller-manager
-  namespace: system
-spec:
-  replicas: 1
-  template:
-    spec:
-      containers:
-      - name: manager
-        resources:
-          limits:
-            cpu: 500m
-            memory: 500Mi
-          requests:
-            cpu: 200m
-            memory: 200Mi
+# ArgoCD application settings
+argocd:
+  project: default
+  server: https://kubernetes.default.svc
+  automated:
+    prune: true
+    selfHeal: true
 EOF
 
-  echo "Updated kustomization.yaml and patches"
+  echo "Updated Helm values file"
 }
 
 install_crd() {
   print_header "Installing Custom Resource Definitions"
-  kubectl apply -f config/crd/bases/
+  kubectl apply -f argocd/templates/crd.yaml
   echo "CRDs installed"
 }
 
@@ -145,14 +120,17 @@ deploy() {
   # Create namespace if it doesn't exist
   kubectl get namespace "${NAMESPACE}" &> /dev/null || kubectl create namespace "${NAMESPACE}"
   
-  # Apply using kustomize
-  kubectl apply -k .
+  # Apply using Helm
+  helm upgrade --install awx-operator ./argocd \
+    --namespace "${NAMESPACE}" \
+    --create-namespace \
+    --values argocd/values.yaml
   
   echo "Operator deployed to namespace: ${NAMESPACE}"
   echo "Waiting for operator pod to be ready..."
   
   # Wait for the pod to be ready
-  kubectl wait --for=condition=ready pod -l control-plane=controller-manager -n "${NAMESPACE}" --timeout=120s
+  kubectl wait --for=condition=ready pod -l app=awx-operator -n "${NAMESPACE}" --timeout=120s
   
   echo "Operator is ready!"
 }
@@ -160,8 +138,8 @@ deploy() {
 undeploy() {
   print_header "Undeploying operator"
   
-  # Delete operator resources using kustomize
-  kubectl delete -k . || true
+  # Uninstall Helm release
+  helm uninstall awx-operator -n "${NAMESPACE}" || true
   
   # Delete namespace
   kubectl delete namespace "${NAMESPACE}" || true
@@ -175,16 +153,16 @@ show_help() {
   echo "Commands:"
   echo "  build                Build the operator image"
   echo "  push                 Push the operator image to registry"
-  echo "  update-kustomization Update kustomization files with image details"
+  echo "  update-values        Update Helm values file with image details"
   echo "  install-crd          Install Custom Resource Definitions"
   echo "  deploy               Deploy the operator to the Kubernetes cluster"
   echo "  undeploy             Remove the operator from the Kubernetes cluster"
-  echo "  all                  Run all commands in sequence (build, push, update-kustomization, install-crd, deploy)"
+  echo "  all                  Run all commands in sequence (build, push, update-values, install-crd, deploy)"
   echo ""
   echo "Environment variables:"
-  echo "  REGISTRY             Container registry (default: quay.io/myuser)"
+  echo "  REGISTRY             Container registry (default: quay.io/wolkenzentrale)"
   echo "  IMAGE_NAME           Image name (default: awx-operator)"
-  echo "  TAG                  Image tag (default: latest)"
+  echo "  TAG                  Image tag (default: aed406c)"
   echo "  NAMESPACE            Namespace for deployment (default: awx-operator-system)"
 }
 
@@ -198,9 +176,9 @@ case "$1" in
     check_prerequisites
     push
     ;;
-  update-kustomization)
+  update-values)
     check_prerequisites
-    update_kustomization
+    update_values
     ;;
   install-crd)
     check_prerequisites
@@ -218,7 +196,7 @@ case "$1" in
     check_prerequisites
     build
     push
-    update_kustomization
+    update_values
     install_crd
     deploy
     ;;

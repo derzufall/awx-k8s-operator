@@ -1,71 +1,79 @@
 # AWX Operator ArgoCD Deployment
 
-This directory contains configuration files for deploying the AWX operator using ArgoCD.
+This directory contains the Helm chart and ArgoCD configuration for deploying the AWX Kubernetes Operator.
 
-## Single Application Deployment
+## Getting Started
 
-For deploying to a single cluster, use the `awx-operator-application.yaml` file:
+### Prerequisites
+
+- Kubernetes cluster
+- ArgoCD installed on your cluster
+- kubectl configured to access your cluster
+
+### Installing
+
+1. Apply the ArgoCD Application:
 
 ```bash
-# Apply the Application resource to your ArgoCD instance
 kubectl apply -f awx-operator-application.yaml -n argocd
 ```
 
-This will create an ArgoCD Application that will deploy the AWX operator using kustomize.
+This will create an ArgoCD Application that will deploy the AWX operator using Helm.
 
-## Multi-Environment Deployment with ApplicationSet
+### Multi-Environment Deployment
 
-For deploying to multiple clusters or environments, use the `awx-operator-applicationset.yaml` file:
+For deploying to multiple environments, you can use the ApplicationSet:
 
 ```bash
-# Apply the ApplicationSet resource to your ArgoCD instance
 kubectl apply -f awx-operator-applicationset.yaml -n argocd
 ```
 
-This will create an ArgoCD ApplicationSet that will generate multiple Applications for different clusters and environments, based on the configurations in the file.
+This will create applications for each environment defined in the ApplicationSet.
 
-## Environment-Specific Configurations
+## Configuration
 
-The following environment-specific value files are provided:
+You can customize the deployment by modifying the `values.yaml` file or by creating environment-specific value files such as `values-production.yaml` or `values-dev.yaml`.
 
-- `values-production.yaml`: Configuration for production environments
-- `values-dev.yaml`: Configuration for development environments
+The main configurable parameters are:
 
-These files can be customized to match your specific requirements.
+- `operator.image`: Container image configuration
+- `operator.resources`: CPU and memory resource limits
+- `operator.reconciliation.period`: Reconciliation interval in seconds
+- `namespace`: Target namespace for the operator
 
-## Customizing the Deployment
+## Using the Operator
 
-To customize the deployment:
+After the operator is deployed, you can create AWX instances by applying AWXInstance custom resources:
 
-1. Modify the values in the appropriate values file
-2. Update the repositories and paths in the Application or ApplicationSet file
-3. Add or modify patches in the `patches` directory
-
-## Manual Sync
-
-You can manually sync the applications from the ArgoCD UI or using the ArgoCD CLI:
-
-```bash
-# Install the ArgoCD CLI
-curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
-chmod +x argocd
-sudo mv argocd /usr/local/bin/argocd
-
-# Login to ArgoCD
-argocd login <ARGOCD_SERVER>
-
-# Sync the application
-argocd app sync awx-operator
+```yaml
+apiVersion: awx.ansible.com/v1alpha1
+kind: AWXInstance
+metadata:
+  name: my-awx
+  namespace: awx
+spec:
+  adminUser: admin
+  adminPassword: password123
+  adminEmail: admin@example.com
+  hostname: awx.example.com
 ```
 
-## Monitoring the Deployment
-
-You can monitor the deployment status from the ArgoCD UI or using the ArgoCD CLI:
+Apply this resource to your cluster:
 
 ```bash
-# Check the application status
-argocd app get awx-operator
+kubectl apply -f your-awx-instance.yaml
+```
 
-# Check the application history
-argocd app history awx-operator
+## Troubleshooting
+
+To check the status of your ArgoCD application:
+
+```bash
+kubectl describe application awx-operator -n argocd
+```
+
+To check the operator logs:
+
+```bash
+kubectl logs -l app=awx-operator -n <namespace>
 ``` 

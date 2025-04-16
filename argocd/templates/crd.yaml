@@ -1,9 +1,9 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: awxinstances.awx.example.com
+  name: awxinstances.awx.ansible.com
 spec:
-  group: awx.example.com
+  group: awx.ansible.com
   names:
     kind: AWXInstance
     listKind: AWXInstanceList
@@ -200,10 +200,14 @@ spec:
                       description: reason contains a programmatic identifier indicating the reason for the condition's last transition.
                       type: string
                     status:
-                      description: status of the condition, one of True, False, Unknown.
+                      description: status of the condition.
                       type: string
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
                     type:
-                      description: type of condition in CamelCase.
+                      description: type of condition.
                       type: string
               projectStatuses:
                 description: ProjectStatuses contains the reconciliation status of each project

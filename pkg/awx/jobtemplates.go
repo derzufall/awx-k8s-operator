@@ -3,7 +3,7 @@ package awx
 import (
 	"fmt"
 
-	awxv1alpha1 "github.com/yourusername/awx-operator/api/v1alpha1"
+	awxv1alpha1 "github.com/derzufall/awx-k8s-operator/api/v1alpha1"
 )
 
 // JobTemplateManager handles AWX Job Template resources
