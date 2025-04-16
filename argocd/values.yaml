@@ -2,7 +2,7 @@ operator:
   image:
     registry: quay.io
     repository: wolkenzentrale/awx-operator
-    tag: aed406c
+    tag: acb0ead
     pullPolicy: IfNotPresent
   
   resources:
