@@ -2,11 +2,9 @@ package awx
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -264,6 +262,15 @@ func (c *Client) GetObject(endpoint string, id int) (map[string]interface{}, err
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
+	// Verify the response has an ID field
+	if _, ok := result["id"]; !ok {
+		log.Error(nil, "Object returned by API missing ID field",
+			"endpoint", endpoint,
+			"id", id,
+			"keys", getMapKeys(result))
+		return nil, fmt.Errorf("API returned object without ID field")
+	}
+
 	return result, nil
 }
 
@@ -297,9 +304,12 @@ func (c *Client) ListObjects(endpoint string, filters map[string]string) ([]map[
 		return nil, err
 	}
 
-	// First try to parse as a standard paginated response
+	// First try to parse as a standard paginated response (most common in AWX)
 	var paginatedResult struct {
-		Results []map[string]interface{} `json:"results"`
+		Count    int                      `json:"count"`
+		Next     *string                  `json:"next"`
+		Previous *string                  `json:"previous"`
+		Results  []map[string]interface{} `json:"results"`
 	}
 	err = json.Unmarshal(respBody, &paginatedResult)
 	if err != nil {
@@ -307,7 +317,12 @@ func (c *Client) ListObjects(endpoint string, filters map[string]string) ([]map[
 	}
 
 	if paginatedResult.Results != nil {
-		// Standard paginated response with results array
+		// Standard paginated response with results array (AWX's typical format)
+		log.Info("API returned paginated response",
+			"endpoint", endpoint,
+			"count", paginatedResult.Count,
+			"resultsCount", len(paginatedResult.Results))
+
 		// Validate the result objects for required fields
 		for i, obj := range paginatedResult.Results {
 			if _, ok := obj["id"]; !ok {
@@ -325,11 +340,15 @@ func (c *Client) ListObjects(endpoint string, filters map[string]string) ([]map[
 	var directResult []map[string]interface{}
 	err = json.Unmarshal(respBody, &directResult)
 	if err != nil {
-		// It's neither a paginated response nor a direct array
+		// Neither a paginated response nor a direct array - log error and return empty array
 		log.Error(err, "Response is neither paginated nor a direct array",
 			"endpoint", endpoint)
 		return []map[string]interface{}{}, nil
 	}
+
+	log.Info("API returned direct array",
+		"endpoint", endpoint,
+		"count", len(directResult))
 
 	// Validate the direct result objects for required fields
 	for i, obj := range directResult {
@@ -394,15 +413,14 @@ func (c *Client) CreateObject(endpoint string, data map[string]interface{}) (map
 				"name", objectName)
 		}
 
-		// If no match was found and we have results, let's try a different approach
-		// The issue might be that the API is returning a list of existing objects, not the created one
-		// Let's do a separate find request to get the object by name
+		// Per AWX documentation, we should make a separate request to find
+		// the newly created object by name
 		if hasName {
 			log.Info("Trying to find created object with separate request",
 				"endpoint", endpoint,
 				"name", objectName)
 
-			// Use FindObjectByName to get the created object
+			// Use a new request with filtering to get the created object
 			filters := map[string]string{"name": objectName}
 			objects, findErr := c.ListObjects(endpoint, filters)
 			if findErr != nil {
@@ -414,10 +432,15 @@ func (c *Client) CreateObject(endpoint string, data map[string]interface{}) (map
 					"endpoint", endpoint,
 					"name", objectName)
 				return objects[0], nil
+			} else {
+				log.Error(nil, "Object not found even with separate request",
+					"endpoint", endpoint,
+					"name", objectName)
 			}
 		}
 
 		// If all else fails, take the first object from the original results
+		// (though this might not be the object we created)
 		if len(results) > 0 {
 			if resultObj, ok := results[0].(map[string]interface{}); ok {
 				log.Info("Using first object from results as fallback",
@@ -453,14 +476,87 @@ func (c *Client) UpdateObject(endpoint string, id int, data map[string]interface
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
+	// Verify the updated object has an ID field
+	if _, ok := result["id"]; !ok {
+		log.Error(nil, "Updated object missing ID field",
+			"endpoint", endpoint,
+			"id", id,
+			"keys", getMapKeys(result))
+
+		// As a fallback, retrieve the object we just updated
+		log.Info("Fetching updated object as fallback",
+			"endpoint", endpoint,
+			"id", id)
+		return c.GetObject(endpoint, id)
+	}
+
 	return result, nil
 }
 
 // DeleteObject deletes an object from the AWX API
 func (c *Client) DeleteObject(endpoint string, id int) error {
 	url := fmt.Sprintf("%s/%d/", endpoint, id)
-	_, err := c.doRequest(http.MethodDelete, url, nil)
-	return err
+
+	// First verify the object exists
+	_, err := c.GetObject(endpoint, id)
+	if err != nil {
+		// If the error indicates the object doesn't exist, treat as success
+		if strings.Contains(err.Error(), "404") {
+			log.Info("Object already deleted or doesn't exist",
+				"endpoint", endpoint,
+				"id", id)
+			return nil
+		}
+		return fmt.Errorf("failed to verify object before deletion: %w", err)
+	}
+
+	// Object exists, attempt to delete it
+	respBody, err := c.doRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		// Check if error is a 404 (already deleted), which can be treated as success
+		if strings.Contains(err.Error(), "404") {
+			log.Info("Object already deleted",
+				"endpoint", endpoint,
+				"id", id)
+			return nil
+		}
+		return fmt.Errorf("failed to delete object: %w", err)
+	}
+
+	// Per AWX API docs, a successful delete typically returns an empty response
+	// But let's add extra handling for any response we might get
+	if len(respBody) > 0 {
+		log.Info("Delete operation returned non-empty response",
+			"endpoint", endpoint,
+			"id", id,
+			"responseLength", len(respBody))
+
+		// Try to parse the response just in case it contains useful information
+		var result map[string]interface{}
+		if err := json.Unmarshal(respBody, &result); err == nil {
+			if len(result) > 0 {
+				log.Info("Delete operation returned structured data",
+					"endpoint", endpoint,
+					"id", id,
+					"keys", getMapKeys(result))
+			}
+		}
+	}
+
+	// Verify the object was actually deleted
+	verifyObj, verifyErr := c.GetObject(endpoint, id)
+	if verifyErr == nil && verifyObj != nil {
+		// Object still exists
+		log.Error(nil, "Object still exists after deletion attempt",
+			"endpoint", endpoint,
+			"id", id)
+		return fmt.Errorf("object still exists after deletion attempt")
+	}
+
+	log.Info("Successfully deleted object",
+		"endpoint", endpoint,
+		"id", id)
+	return nil
 }
 
 // FindObjectByName finds an object by name in the AWX API
@@ -472,7 +568,19 @@ func (c *Client) FindObjectByName(endpoint, name string) (map[string]interface{}
 	}
 
 	if len(objects) == 0 {
+		// Object not found
+		log.Info("Object not found by name",
+			"endpoint", endpoint,
+			"name", name)
 		return nil, nil
+	}
+
+	// Per AWX docs, name should be unique, but let's log if we find multiple matches
+	if len(objects) > 1 {
+		log.Info("Found multiple objects with the same name (using first)",
+			"endpoint", endpoint,
+			"name", name,
+			"count", len(objects))
 	}
 
 	// Verify the object has an ID field
@@ -482,6 +590,9 @@ func (c *Client) FindObjectByName(endpoint, name string) (map[string]interface{}
 			"endpoint", endpoint,
 			"name", name,
 			"keys", getMapKeys(result))
+
+		// Still return the object, but log the issue
+		// The calling code should handle objects without IDs
 	}
 
 	return result, nil
@@ -489,85 +600,37 @@ func (c *Client) FindObjectByName(endpoint, name string) (map[string]interface{}
 
 // TestConnection tests the connection to the AWX instance
 func (c *Client) TestConnection() error {
-	// Make a request to the /api/ endpoint to check if the connection works
-	endpoint := fmt.Sprintf("%s/api/", c.baseURL)
+	// Make a request to the API v2 endpoint to check if the connection works
+	endpoint := "ping"
 
-	// Log the connection attempt
-	log.Info("Testing connection to AWX", "url", endpoint)
+	log.Info("Testing connection to AWX", "baseURL", c.baseURL)
 
-	req, err := http.NewRequest("GET", endpoint, nil)
+	// Use the existing doRequest method to leverage our error handling
+	respBody, err := c.doRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
-		log.Error(err, "Failed to create request", "url", endpoint)
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Add basic auth
-	req.SetBasicAuth(c.username, c.password)
-
-	// Create a client with appropriate TLS configuration based on the protocol
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
-	// If using HTTPS, configure TLS
-	if u, err := url.Parse(c.baseURL); err == nil && u.Scheme == "https" {
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, // For testing; consider proper TLS verification in production
-			},
-		}
-	}
-
-	// Perform the request with detailed error handling
-	resp, err := client.Do(req)
-	if err != nil {
-		// Log connection error details
-		log.Error(err, "Connection to AWX failed",
-			"url", endpoint,
+		log.Error(err, "Failed to connect to AWX",
 			"baseURL", c.baseURL,
 			"username", c.username)
-
-		// Check for common network errors and provide more context
-		if urlErr, ok := err.(*url.Error); ok {
-			if urlErr.Timeout() {
-				return fmt.Errorf("connection timeout: %w", err)
-			} else if opErr, ok := urlErr.Err.(*net.OpError); ok {
-				if opErr.Op == "dial" {
-					return fmt.Errorf("cannot reach host (dns or network issue): %w", err)
-				} else if opErr.Op == "read" {
-					return fmt.Errorf("connection reset or closed by host: %w", err)
-				}
-			}
-		}
 		return fmt.Errorf("failed to connect to AWX: %w", err)
 	}
-	defer resp.Body.Close()
 
-	// Read the response body for error details if status is not OK
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		bodyContent := string(bodyBytes)
-
-		log.Error(nil, "Unexpected status code from AWX",
-			"statusCode", resp.StatusCode,
-			"url", endpoint,
-			"response", bodyContent)
-
-		// Add specific error messages for common status codes
-		switch resp.StatusCode {
-		case http.StatusUnauthorized:
-			return fmt.Errorf("authentication failed (401): %s", bodyContent)
-		case http.StatusForbidden:
-			return fmt.Errorf("permission denied (403): %s", bodyContent)
-		case http.StatusNotFound:
-			return fmt.Errorf("API endpoint not found (404): %s", bodyContent)
-		case http.StatusServiceUnavailable:
-			return fmt.Errorf("service unavailable (503): %s", bodyContent)
-		default:
-			return fmt.Errorf("unexpected status code: %d - %s", resp.StatusCode, bodyContent)
+	// Try to parse the response
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err == nil {
+		// Check for version or other information
+		if version, ok := result["version"]; ok {
+			log.Info("Successfully connected to AWX",
+				"baseURL", c.baseURL,
+				"version", version)
+		} else {
+			log.Info("Successfully connected to AWX",
+				"baseURL", c.baseURL,
+				"response", result)
 		}
+	} else {
+		log.Info("Successfully connected to AWX (could not parse response)",
+			"baseURL", c.baseURL)
 	}
 
-	log.Info("Successfully connected to AWX", "url", endpoint)
 	return nil
 }

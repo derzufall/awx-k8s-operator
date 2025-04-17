@@ -20,6 +20,7 @@ func NewInventoryManager(client *Client) *InventoryManager {
 
 // GetInventory retrieves an inventory by name
 func (im *InventoryManager) GetInventory(name string) (map[string]interface{}, error) {
+	log.Info("Fetching inventory by name", "name", name)
 	return im.client.FindObjectByName("inventories", name)
 }
 
@@ -113,24 +114,31 @@ func (im *InventoryManager) isHostInDesiredState(host map[string]interface{}, ho
 
 // EnsureInventory ensures that an inventory exists with the specified configuration
 func (im *InventoryManager) EnsureInventory(inventorySpec awxv1alpha1.InventorySpec) (map[string]interface{}, error) {
+	log.Info("Ensuring inventory exists with desired configuration", "name", inventorySpec.Name)
+
 	// First, check if inventory exists
 	inventory, err := im.client.FindObjectByName("inventories", inventorySpec.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check if inventory exists: %w", err)
 	}
 
+	// Per AWX API docs, we need to set organization ID
+	// Using default organization (ID 1) since it's not specified in our InventorySpec
+	orgID := 1
+
 	// Map inventory spec to AWX API fields
 	inventoryData := map[string]interface{}{
-		"name":        inventorySpec.Name,
-		"description": inventorySpec.Description,
-		"variables":   inventorySpec.Variables,
+		"name":         inventorySpec.Name,
+		"description":  inventorySpec.Description,
+		"variables":    inventorySpec.Variables,
+		"organization": orgID,
 	}
 
 	var inventoryID int
 	// Create or update inventory
 	if inventory == nil {
 		// Inventory doesn't exist, create it
-		log.Info("Creating AWX inventory", "name", inventorySpec.Name)
+		log.Info("Creating AWX inventory", "name", inventorySpec.Name, "organization", orgID)
 		inventory, err = im.client.CreateObject("inventories", inventoryData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create inventory: %w", err)
@@ -143,6 +151,10 @@ func (im *InventoryManager) EnsureInventory(inventorySpec awxv1alpha1.InventoryS
 				"keys", getMapKeys(inventory))
 			return nil, fmt.Errorf("created inventory '%s' has no ID field", inventorySpec.Name)
 		}
+
+		log.Info("Successfully created inventory",
+			"name", inventorySpec.Name,
+			"id", inventory["id"])
 	} else {
 		// Inventory exists, update it
 		inventoryID, err = getObjectID(inventory)
@@ -158,6 +170,10 @@ func (im *InventoryManager) EnsureInventory(inventorySpec awxv1alpha1.InventoryS
 		if err != nil {
 			return nil, fmt.Errorf("failed to update inventory: %w", err)
 		}
+
+		log.Info("Successfully updated inventory",
+			"name", inventorySpec.Name,
+			"id", inventoryID)
 	}
 
 	// Get inventory ID for host operations
@@ -168,6 +184,9 @@ func (im *InventoryManager) EnsureInventory(inventorySpec awxv1alpha1.InventoryS
 
 	// Process hosts if defined
 	if len(inventorySpec.Hosts) > 0 {
+		log.Info("Reconciling inventory hosts",
+			"inventory", inventorySpec.Name,
+			"count", len(inventorySpec.Hosts))
 		err = im.reconcileHosts(inventoryID, inventorySpec.Hosts)
 		if err != nil {
 			return nil, fmt.Errorf("failed to reconcile hosts for inventory '%s': %w", inventorySpec.Name, err)
@@ -179,8 +198,10 @@ func (im *InventoryManager) EnsureInventory(inventorySpec awxv1alpha1.InventoryS
 
 // reconcileHosts ensures that the hosts in the inventory match the desired state
 func (im *InventoryManager) reconcileHosts(inventoryID int, desiredHosts []awxv1alpha1.HostSpec) error {
-	// Get existing hosts
+	// Per AWX API: use the related hosts endpoint for an inventory
 	hostsEndpoint := fmt.Sprintf("inventories/%d/hosts", inventoryID)
+	log.Info("Fetching existing hosts", "endpoint", hostsEndpoint)
+
 	existingHosts, err := im.client.ListObjects(hostsEndpoint, nil)
 	if err != nil {
 		return fmt.Errorf("failed to list existing hosts: %w", err)
@@ -198,7 +219,7 @@ func (im *InventoryManager) reconcileHosts(inventoryID int, desiredHosts []awxv1
 	// Track desired host names to identify hosts to remove
 	desiredHostNames := make(map[string]bool)
 
-	// Create or update hosts
+	// Create or update hosts according to AWX API docs
 	for _, hostSpec := range desiredHosts {
 		desiredHostNames[hostSpec.Name] = true
 
@@ -214,17 +235,22 @@ func (im *InventoryManager) reconcileHosts(inventoryID int, desiredHosts []awxv1
 			// Update existing host
 			hostID, err := getObjectID(existingHost)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to get host ID: %w", err)
 			}
 
-			log.Info("Updating AWX host", "name", hostSpec.Name, "id", hostID)
+			log.Info("Updating AWX host",
+				"name", hostSpec.Name,
+				"id", hostID,
+				"inventory", inventoryID)
 			_, err = im.client.UpdateObject("hosts", hostID, hostData)
 			if err != nil {
 				return fmt.Errorf("failed to update host %s: %w", hostSpec.Name, err)
 			}
 		} else {
 			// Create new host
-			log.Info("Creating AWX host", "name", hostSpec.Name, "inventory", inventoryID)
+			log.Info("Creating AWX host",
+				"name", hostSpec.Name,
+				"inventory", inventoryID)
 			_, err := im.client.CreateObject("hosts", hostData)
 			if err != nil {
 				return fmt.Errorf("failed to create host %s: %w", hostSpec.Name, err)
@@ -233,14 +259,18 @@ func (im *InventoryManager) reconcileHosts(inventoryID int, desiredHosts []awxv1
 	}
 
 	// Remove hosts that are not in the desired state
+	// According to AWX API docs, we should use the DELETE method on each host
 	for name, host := range existingHostMap {
 		if !desiredHostNames[name] {
 			hostID, err := getObjectID(host)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to get host ID for deletion: %w", err)
 			}
 
-			log.Info("Deleting AWX host", "name", name, "id", hostID)
+			log.Info("Deleting AWX host",
+				"name", name,
+				"id", hostID,
+				"inventory", inventoryID)
 			err = im.client.DeleteObject("hosts", hostID)
 			if err != nil {
 				return fmt.Errorf("failed to delete host %s: %w", name, err)
@@ -248,6 +278,9 @@ func (im *InventoryManager) reconcileHosts(inventoryID int, desiredHosts []awxv1
 		}
 	}
 
+	log.Info("Host reconciliation complete",
+		"inventory", inventoryID,
+		"hostCount", len(desiredHosts))
 	return nil
 }
 

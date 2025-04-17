@@ -20,6 +20,7 @@ func NewProjectManager(client *Client) *ProjectManager {
 
 // GetProject retrieves a project by name
 func (pm *ProjectManager) GetProject(name string) (map[string]interface{}, error) {
+	log.Info("Fetching project by name", "name", name)
 	return pm.client.FindObjectByName("projects", name)
 }
 
@@ -83,17 +84,24 @@ func (pm *ProjectManager) IsProjectInDesiredState(project map[string]interface{}
 
 // EnsureProject ensures that a project exists with the specified configuration
 func (pm *ProjectManager) EnsureProject(projectSpec awxv1alpha1.ProjectSpec) (map[string]interface{}, error) {
+	log.Info("Ensuring project exists with desired configuration", "name", projectSpec.Name)
+
 	// First, check if project exists
 	project, err := pm.client.FindObjectByName("projects", projectSpec.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check if project exists: %w", err)
 	}
 
-	// Map project spec to AWX API fields
+	// Per AWX API docs, organization is required
+	// Using default organization (ID 1) since it's not specified in our ProjectSpec
+	orgID := 1
+
+	// Map project spec to AWX API fields according to AWX API docs
 	projectData := map[string]interface{}{
-		"name":        projectSpec.Name,
-		"description": projectSpec.Description,
-		"scm_type":    projectSpec.SCMType,
+		"name":         projectSpec.Name,
+		"description":  projectSpec.Description,
+		"scm_type":     projectSpec.SCMType,
+		"organization": orgID,
 	}
 
 	// Only set SCM URL if provided and SCM type is not manual
@@ -108,6 +116,7 @@ func (pm *ProjectManager) EnsureProject(projectSpec awxv1alpha1.ProjectSpec) (ma
 
 	// Set SCM credential if provided
 	if projectSpec.SCMCredential != "" {
+		log.Info("Finding SCM credential", "name", projectSpec.SCMCredential)
 		credential, err := pm.client.FindObjectByName("credentials", projectSpec.SCMCredential)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find SCM credential: %w", err)
@@ -117,6 +126,9 @@ func (pm *ProjectManager) EnsureProject(projectSpec awxv1alpha1.ProjectSpec) (ma
 			credentialID, ok := credential["id"]
 			if ok {
 				projectData["credential"] = credentialID
+				log.Info("Setting SCM credential",
+					"name", projectSpec.SCMCredential,
+					"id", credentialID)
 			}
 		}
 	}
@@ -124,7 +136,10 @@ func (pm *ProjectManager) EnsureProject(projectSpec awxv1alpha1.ProjectSpec) (ma
 	// Create or update project
 	if project == nil {
 		// Project doesn't exist, create it
-		log.Info("Creating AWX project", "name", projectSpec.Name)
+		log.Info("Creating AWX project",
+			"name", projectSpec.Name,
+			"organization", orgID,
+			"scm_type", projectSpec.SCMType)
 		project, err = pm.client.CreateObject("projects", projectData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create project: %w", err)
@@ -155,6 +170,13 @@ func (pm *ProjectManager) EnsureProject(projectSpec awxv1alpha1.ProjectSpec) (ma
 		id, _ := getObjectID(project)
 		log.Info("Successfully created AWX project", "name", projectSpec.Name, "id", id)
 
+		// Per AWX API docs, new projects should be synced to make playbooks available
+		if projectSpec.SCMType != "manual" {
+			log.Info("Project created, consider syncing it to make playbooks available",
+				"name", projectSpec.Name,
+				"id", id)
+		}
+
 		return project, nil
 	} else {
 		// Project exists, update it
@@ -166,7 +188,10 @@ func (pm *ProjectManager) EnsureProject(projectSpec awxv1alpha1.ProjectSpec) (ma
 			return nil, fmt.Errorf("failed to get ID from existing project '%s': %w", projectSpec.Name, err)
 		}
 
-		log.Info("Updating AWX project", "name", projectSpec.Name, "id", id)
+		log.Info("Updating AWX project",
+			"name", projectSpec.Name,
+			"id", id,
+			"scm_type", projectSpec.SCMType)
 		project, err = pm.client.UpdateObject("projects", id, projectData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to update project: %w", err)
@@ -181,6 +206,8 @@ func (pm *ProjectManager) EnsureProject(projectSpec awxv1alpha1.ProjectSpec) (ma
 
 // DeleteProject deletes a project by name
 func (pm *ProjectManager) DeleteProject(name string) error {
+	log.Info("Deleting project", "name", name)
+
 	project, err := pm.client.FindObjectByName("projects", name)
 	if err != nil {
 		return fmt.Errorf("failed to check if project exists: %w", err)
@@ -188,14 +215,21 @@ func (pm *ProjectManager) DeleteProject(name string) error {
 
 	if project == nil {
 		// Project doesn't exist, nothing to do
+		log.Info("Project already deleted", "name", name)
 		return nil
 	}
 
 	id, err := getObjectID(project)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get project ID: %w", err)
 	}
 
 	log.Info("Deleting AWX project", "name", name, "id", id)
-	return pm.client.DeleteObject("projects", id)
+	err = pm.client.DeleteObject("projects", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete project %s: %w", name, err)
+	}
+
+	log.Info("Successfully deleted project", "name", name)
+	return nil
 }

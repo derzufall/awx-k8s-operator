@@ -20,6 +20,7 @@ func NewJobTemplateManager(client *Client) *JobTemplateManager {
 
 // GetJobTemplate retrieves a job template by name
 func (jtm *JobTemplateManager) GetJobTemplate(name string) (map[string]interface{}, error) {
+	log.Info("Fetching job template by name", "name", name)
 	return jtm.client.FindObjectByName("job_templates", name)
 }
 
@@ -116,13 +117,16 @@ func (jtm *JobTemplateManager) IsJobTemplateInDesiredState(jobTemplate map[strin
 
 // EnsureJobTemplate ensures that a job template exists with the specified configuration
 func (jtm *JobTemplateManager) EnsureJobTemplate(jobTemplateSpec awxv1alpha1.JobTemplateSpec) (map[string]interface{}, error) {
+	log.Info("Ensuring job template exists with desired configuration", "name", jobTemplateSpec.Name)
+
 	// First, check if job template exists
 	jobTemplate, err := jtm.client.FindObjectByName("job_templates", jobTemplateSpec.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check if job template exists: %w", err)
 	}
 
-	// Find the project by name
+	// Find the project by name - required for job templates per AWX API docs
+	log.Info("Finding associated project", "name", jobTemplateSpec.ProjectName)
 	project, err := jtm.client.FindObjectByName("projects", jobTemplateSpec.ProjectName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find project %s: %w", jobTemplateSpec.ProjectName, err)
@@ -132,10 +136,11 @@ func (jtm *JobTemplateManager) EnsureJobTemplate(jobTemplateSpec awxv1alpha1.Job
 	}
 	projectID, err := getObjectID(project)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get project ID: %w", err)
 	}
 
-	// Find the inventory by name
+	// Find the inventory by name - required for job templates per AWX API docs
+	log.Info("Finding associated inventory", "name", jobTemplateSpec.InventoryName)
 	inventory, err := jtm.client.FindObjectByName("inventories", jobTemplateSpec.InventoryName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find inventory %s: %w", jobTemplateSpec.InventoryName, err)
@@ -145,16 +150,21 @@ func (jtm *JobTemplateManager) EnsureJobTemplate(jobTemplateSpec awxv1alpha1.Job
 	}
 	inventoryID, err := getObjectID(inventory)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get inventory ID: %w", err)
 	}
 
-	// Map job template spec to AWX API fields
+	// Map job template spec to AWX API fields according to AWX API docs
 	jobTemplateData := map[string]interface{}{
-		"name":        jobTemplateSpec.Name,
-		"description": jobTemplateSpec.Description,
-		"project":     projectID,
-		"inventory":   inventoryID,
-		"playbook":    jobTemplateSpec.Playbook,
+		"name":                     jobTemplateSpec.Name,
+		"description":              jobTemplateSpec.Description,
+		"project":                  projectID,
+		"inventory":                inventoryID,
+		"playbook":                 jobTemplateSpec.Playbook,
+		"job_type":                 "run", // Default to 'run' if not specified
+		"verbosity":                0,     // Default verbosity
+		"ask_limit_on_launch":      false,
+		"ask_inventory_on_launch":  false,
+		"ask_credential_on_launch": false,
 	}
 
 	// Set extra vars if provided
@@ -166,21 +176,56 @@ func (jtm *JobTemplateManager) EnsureJobTemplate(jobTemplateSpec awxv1alpha1.Job
 	if jobTemplate == nil {
 		// Job template doesn't exist, create it
 		log.Info("Creating AWX job template", "name", jobTemplateSpec.Name)
-		return jtm.client.CreateObject("job_templates", jobTemplateData)
+		jobTemplate, err = jtm.client.CreateObject("job_templates", jobTemplateData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create job template: %w", err)
+		}
+
+		// Verify new job template has an ID
+		if _, ok := jobTemplate["id"]; !ok {
+			log.Error(nil, "Newly created job template missing ID field",
+				"name", jobTemplateSpec.Name,
+				"keys", getMapKeys(jobTemplate))
+			return nil, fmt.Errorf("created job template '%s' has no ID field", jobTemplateSpec.Name)
+		}
+
+		log.Info("Successfully created job template",
+			"name", jobTemplateSpec.Name,
+			"id", jobTemplate["id"],
+			"project", jobTemplateSpec.ProjectName,
+			"inventory", jobTemplateSpec.InventoryName)
 	} else {
 		// Job template exists, update it
 		id, err := getObjectID(jobTemplate)
 		if err != nil {
-			return nil, err
+			log.Error(err, "Cannot get ID from existing job template",
+				"name", jobTemplateSpec.Name,
+				"keys", getMapKeys(jobTemplate))
+			return nil, fmt.Errorf("failed to get ID from existing job template '%s': %w", jobTemplateSpec.Name, err)
 		}
 
-		log.Info("Updating AWX job template", "name", jobTemplateSpec.Name, "id", id)
-		return jtm.client.UpdateObject("job_templates", id, jobTemplateData)
+		log.Info("Updating AWX job template",
+			"name", jobTemplateSpec.Name,
+			"id", id)
+		jobTemplate, err = jtm.client.UpdateObject("job_templates", id, jobTemplateData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update job template: %w", err)
+		}
+
+		log.Info("Successfully updated job template",
+			"name", jobTemplateSpec.Name,
+			"id", id,
+			"project", jobTemplateSpec.ProjectName,
+			"inventory", jobTemplateSpec.InventoryName)
 	}
+
+	return jobTemplate, nil
 }
 
 // DeleteJobTemplate deletes a job template by name
 func (jtm *JobTemplateManager) DeleteJobTemplate(name string) error {
+	log.Info("Deleting job template", "name", name)
+
 	jobTemplate, err := jtm.client.FindObjectByName("job_templates", name)
 	if err != nil {
 		return fmt.Errorf("failed to check if job template exists: %w", err)
@@ -188,14 +233,21 @@ func (jtm *JobTemplateManager) DeleteJobTemplate(name string) error {
 
 	if jobTemplate == nil {
 		// Job template doesn't exist, nothing to do
+		log.Info("Job template already deleted", "name", name)
 		return nil
 	}
 
 	id, err := getObjectID(jobTemplate)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get job template ID: %w", err)
 	}
 
 	log.Info("Deleting AWX job template", "name", name, "id", id)
-	return jtm.client.DeleteObject("job_templates", id)
+	err = jtm.client.DeleteObject("job_templates", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete job template %s: %w", name, err)
+	}
+
+	log.Info("Successfully deleted job template", "name", name)
+	return nil
 }
