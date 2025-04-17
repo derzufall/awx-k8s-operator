@@ -2,7 +2,6 @@ package awx
 
 import (
 	"fmt"
-	"strconv"
 
 	awxv1alpha1 "github.com/derzufall/awx-k8s-operator/api/v1alpha1"
 )
@@ -158,24 +157,4 @@ func (pm *ProjectManager) DeleteProject(name string) error {
 
 	log.Info("Deleting AWX project", "name", name, "id", id)
 	return pm.client.DeleteObject("projects", id)
-}
-
-// getObjectID extracts the ID from an AWX API object
-func getObjectID(obj map[string]interface{}) (int, error) {
-	idVal, ok := obj["id"]
-	if !ok {
-		return 0, fmt.Errorf("object has no ID field")
-	}
-
-	// Handle different types of ID (float64 from JSON or int)
-	switch id := idVal.(type) {
-	case float64:
-		return int(id), nil
-	case int:
-		return id, nil
-	case string:
-		return strconv.Atoi(id)
-	default:
-		return 0, fmt.Errorf("unexpected ID type: %T", idVal)
-	}
 }
