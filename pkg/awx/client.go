@@ -235,25 +235,51 @@ func (c *Client) ListObjects(endpoint string, filters map[string]string) ([]map[
 		return nil, err
 	}
 
-	var result struct {
+	// First try to parse as a standard paginated response
+	var paginatedResult struct {
 		Results []map[string]interface{} `json:"results"`
 	}
-	err = json.Unmarshal(respBody, &result)
+	err = json.Unmarshal(respBody, &paginatedResult)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Validate the result objects for required fields
-	for i, obj := range result.Results {
+	if paginatedResult.Results != nil {
+		// Standard paginated response with results array
+		// Validate the result objects for required fields
+		for i, obj := range paginatedResult.Results {
+			if _, ok := obj["id"]; !ok {
+				log.Info("API object missing ID field",
+					"endpoint", endpoint,
+					"index", i,
+					"keys", getMapKeys(obj))
+			}
+		}
+
+		return paginatedResult.Results, nil
+	}
+
+	// If no results array found, try parsing as a direct array of objects
+	var directResult []map[string]interface{}
+	err = json.Unmarshal(respBody, &directResult)
+	if err != nil {
+		// It's neither a paginated response nor a direct array
+		log.Error(err, "Response is neither paginated nor a direct array",
+			"endpoint", endpoint)
+		return []map[string]interface{}{}, nil
+	}
+
+	// Validate the direct result objects for required fields
+	for i, obj := range directResult {
 		if _, ok := obj["id"]; !ok {
-			log.Info("API object missing ID field",
+			log.Info("API object missing ID field in direct array",
 				"endpoint", endpoint,
 				"index", i,
 				"keys", getMapKeys(obj))
 		}
 	}
 
-	return result.Results, nil
+	return directResult, nil
 }
 
 // CreateObject creates an object in the AWX API
@@ -263,10 +289,28 @@ func (c *Client) CreateObject(endpoint string, data map[string]interface{}) (map
 		return nil, err
 	}
 
+	// First try to parse as a direct object
 	var result map[string]interface{}
 	err = json.Unmarshal(respBody, &result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Check if the response has a 'results' array - some AWX endpoints return collections
+	if results, ok := result["results"].([]interface{}); ok && len(results) > 0 {
+		log.Info("API returned results array instead of direct object",
+			"endpoint", endpoint,
+			"count", len(results))
+
+		// Extract the first object from the results array
+		if resultObj, ok := results[0].(map[string]interface{}); ok {
+			return resultObj, nil
+		} else {
+			log.Error(nil, "Failed to extract object from results array",
+				"endpoint", endpoint,
+				"dataType", fmt.Sprintf("%T", results[0]))
+			return nil, fmt.Errorf("unexpected data type in results array")
+		}
 	}
 
 	return result, nil
