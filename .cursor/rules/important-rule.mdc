@@ -7,3 +7,4 @@ Always fix all errors at the end of each modification of the source code.
 Always clean up unused code or files after a change.
 Make sure the whole code project is in optimal condition.
 Check for any mistakes you could have made by validating everything in the project after a change.
+Use the Conventional Commits standard for commit message generation.
