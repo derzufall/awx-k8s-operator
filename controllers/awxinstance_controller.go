@@ -316,6 +316,17 @@ func (r *AWXInstanceReconciler) reconcileInternalChanges(ctx context.Context,
 	logger := log.FromContext(ctx)
 	changesDetected := false
 
+	// Ensure status maps are initialized
+	if instance.Status.ProjectStatuses == nil {
+		instance.Status.ProjectStatuses = make(map[string]string)
+	}
+	if instance.Status.InventoryStatuses == nil {
+		instance.Status.InventoryStatuses = make(map[string]string)
+	}
+	if instance.Status.JobTemplateStatuses == nil {
+		instance.Status.JobTemplateStatuses = make(map[string]string)
+	}
+
 	// Create managers for each resource type
 	projectManager := awx.NewProjectManager(awxClient)
 	inventoryManager := awx.NewInventoryManager(awxClient)
