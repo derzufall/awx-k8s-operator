@@ -216,7 +216,7 @@ func (c *Client) ListObjects(endpoint string, filters map[string]string) ([]map[
 			params.Add(key, value)
 		}
 		// Separate the endpoint from the query string - don't include ? in the endpoint
-		requestEndpoint = fmt.Sprintf("%s", endpoint)
+		requestEndpoint = endpoint
 
 		// The ? will be properly handled by url.Parse in doRequest
 		if strings.Contains(requestEndpoint, "?") {
@@ -241,6 +241,16 @@ func (c *Client) ListObjects(endpoint string, filters map[string]string) ([]map[
 	err = json.Unmarshal(respBody, &result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Validate the result objects for required fields
+	for i, obj := range result.Results {
+		if _, ok := obj["id"]; !ok {
+			log.Info("API object missing ID field",
+				"endpoint", endpoint,
+				"index", i,
+				"keys", getMapKeys(obj))
+		}
 	}
 
 	return result.Results, nil
@@ -298,7 +308,16 @@ func (c *Client) FindObjectByName(endpoint, name string) (map[string]interface{}
 		return nil, nil
 	}
 
-	return objects[0], nil
+	// Verify the object has an ID field
+	result := objects[0]
+	if _, ok := result["id"]; !ok {
+		log.Error(nil, "Object returned by API missing ID field",
+			"endpoint", endpoint,
+			"name", name,
+			"keys", getMapKeys(result))
+	}
+
+	return result, nil
 }
 
 // TestConnection tests the connection to the AWX instance

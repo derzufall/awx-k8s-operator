@@ -135,11 +135,22 @@ func (im *InventoryManager) EnsureInventory(inventorySpec awxv1alpha1.InventoryS
 		if err != nil {
 			return nil, fmt.Errorf("failed to create inventory: %w", err)
 		}
+
+		// Verify new inventory has an ID
+		if _, ok := inventory["id"]; !ok {
+			log.Error(nil, "Newly created inventory missing ID field",
+				"name", inventorySpec.Name,
+				"keys", getMapKeys(inventory))
+			return nil, fmt.Errorf("created inventory '%s' has no ID field", inventorySpec.Name)
+		}
 	} else {
 		// Inventory exists, update it
 		inventoryID, err = getObjectID(inventory)
 		if err != nil {
-			return nil, err
+			log.Error(err, "Cannot get ID from existing inventory",
+				"name", inventorySpec.Name,
+				"keys", getMapKeys(inventory))
+			return nil, fmt.Errorf("failed to get ID from existing inventory '%s': %w", inventorySpec.Name, err)
 		}
 
 		log.Info("Updating AWX inventory", "name", inventorySpec.Name, "id", inventoryID)
@@ -152,14 +163,14 @@ func (im *InventoryManager) EnsureInventory(inventorySpec awxv1alpha1.InventoryS
 	// Get inventory ID for host operations
 	inventoryID, err = getObjectID(inventory)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get inventory ID for host operations in '%s': %w", inventorySpec.Name, err)
 	}
 
 	// Process hosts if defined
 	if len(inventorySpec.Hosts) > 0 {
 		err = im.reconcileHosts(inventoryID, inventorySpec.Hosts)
 		if err != nil {
-			return nil, fmt.Errorf("failed to reconcile hosts: %w", err)
+			return nil, fmt.Errorf("failed to reconcile hosts for inventory '%s': %w", inventorySpec.Name, err)
 		}
 	}
 
