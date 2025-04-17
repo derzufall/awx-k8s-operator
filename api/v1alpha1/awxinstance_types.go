@@ -159,6 +159,14 @@ type AWXInstanceStatus struct {
 	// JobTemplateStatuses contains the reconciliation status of each job template
 	// +optional
 	JobTemplateStatuses map[string]string `json:"jobTemplateStatuses,omitempty"`
+
+	// LastConnectionCheck is the timestamp of the last connection check
+	// +optional
+	LastConnectionCheck metav1.Time `json:"lastConnectionCheck,omitempty"`
+
+	// ConnectionStatus represents the current connection status to the AWX instance
+	// +optional
+	ConnectionStatus string `json:"connectionStatus,omitempty"`
 }
 
 //+kubebuilder:object:root=true

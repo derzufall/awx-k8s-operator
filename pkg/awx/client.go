@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -192,8 +193,13 @@ func (c *Client) FindObjectByName(endpoint, name string) (map[string]interface{}
 func (c *Client) TestConnection() error {
 	// Make a request to the /api/ endpoint to check if the connection works
 	endpoint := fmt.Sprintf("%s/api/", c.baseURL)
+
+	// Log the connection attempt
+	log.Info("Testing connection to AWX", "url", endpoint)
+
 	req, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
+		log.Error(err, "Failed to create request", "url", endpoint)
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -214,15 +220,56 @@ func (c *Client) TestConnection() error {
 		}
 	}
 
+	// Perform the request with detailed error handling
 	resp, err := client.Do(req)
 	if err != nil {
+		// Log connection error details
+		log.Error(err, "Connection to AWX failed",
+			"url", endpoint,
+			"baseURL", c.baseURL,
+			"username", c.username)
+
+		// Check for common network errors and provide more context
+		if urlErr, ok := err.(*url.Error); ok {
+			if urlErr.Timeout() {
+				return fmt.Errorf("connection timeout: %w", err)
+			} else if opErr, ok := urlErr.Err.(*net.OpError); ok {
+				if opErr.Op == "dial" {
+					return fmt.Errorf("cannot reach host (dns or network issue): %w", err)
+				} else if opErr.Op == "read" {
+					return fmt.Errorf("connection reset or closed by host: %w", err)
+				}
+			}
+		}
 		return fmt.Errorf("failed to connect to AWX: %w", err)
 	}
 	defer resp.Body.Close()
 
+	// Read the response body for error details if status is not OK
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyContent := string(bodyBytes)
+
+		log.Error(nil, "Unexpected status code from AWX",
+			"statusCode", resp.StatusCode,
+			"url", endpoint,
+			"response", bodyContent)
+
+		// Add specific error messages for common status codes
+		switch resp.StatusCode {
+		case http.StatusUnauthorized:
+			return fmt.Errorf("authentication failed (401): %s", bodyContent)
+		case http.StatusForbidden:
+			return fmt.Errorf("permission denied (403): %s", bodyContent)
+		case http.StatusNotFound:
+			return fmt.Errorf("API endpoint not found (404): %s", bodyContent)
+		case http.StatusServiceUnavailable:
+			return fmt.Errorf("service unavailable (503): %s", bodyContent)
+		default:
+			return fmt.Errorf("unexpected status code: %d - %s", resp.StatusCode, bodyContent)
+		}
 	}
 
+	log.Info("Successfully connected to AWX", "url", endpoint)
 	return nil
 }

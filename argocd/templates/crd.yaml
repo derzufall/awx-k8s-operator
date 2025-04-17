@@ -233,4 +233,11 @@ spec:
                 description: JobTemplateStatuses contains the reconciliation status of each job template
                 type: object
                 additionalProperties:
-                  type: string 
+                  type: string
+              lastConnectionCheck:
+                description: LastConnectionCheck is the timestamp of the last connection check
+                type: string
+                format: date-time
+              connectionStatus:
+                description: ConnectionStatus represents the current connection status to the AWX instance
+                type: string 

@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -74,6 +75,15 @@ func (r *AWXInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		instance.Status.JobTemplateStatuses = make(map[string]string)
 	}
 
+	// Initialize or update the LastConnectionCheck timestamp if needed
+	if instance.Status.LastConnectionCheck.IsZero() {
+		instance.Status.LastConnectionCheck = metav1.Now()
+		if err := r.Status().Update(ctx, instance); err != nil {
+			logger.Error(err, "Failed to update LastConnectionCheck timestamp")
+			return ctrl.Result{}, err
+		}
+	}
+
 	// Define a finalizer to clean up AWX resources when the CR is deleted
 	awxFinalizer := "awx.ansible.com/finalizer"
 
@@ -112,37 +122,97 @@ func (r *AWXInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	baseURL := fmt.Sprintf("%s://%s", protocol, instance.Spec.Hostname)
 	awxClient := awx.NewClient(baseURL, instance.Spec.AdminUser, instance.Spec.AdminPassword)
 
-	// Test connection to AWX
-	if err := r.testConnection(ctx, awxClient); err != nil {
-		logger.Error(err, "Failed to connect to AWX instance")
+	// Check if we need to perform a periodic connection test (every 30 seconds)
+	now := metav1.Now()
+	timeSinceLastCheck := now.Time.Sub(instance.Status.LastConnectionCheck.Time)
+	if timeSinceLastCheck >= 30*time.Second {
+		logger.Info("Performing periodic connection test",
+			"instance", instance.Name,
+			"hostname", instance.Spec.Hostname,
+			"timeSinceLastCheck", timeSinceLastCheck.String())
 
-		// If this is an external instance, we expect it to exist
-		if instance.Spec.ExternalInstance {
+		// Update the LastConnectionCheck timestamp
+		instance.Status.LastConnectionCheck = now
+
+		// Test connection to AWX
+		connectionErr := r.testConnection(ctx, awxClient)
+		if connectionErr != nil {
+			// Update connection status
+			instance.Status.ConnectionStatus = fmt.Sprintf("Failed: %v", connectionErr)
+			logger.Error(connectionErr, "Periodic connection test failed",
+				"instance", instance.Name,
+				"hostname", instance.Spec.Hostname,
+				"protocol", protocol,
+				"user", instance.Spec.AdminUser)
+		} else {
+			// Connection successful
+			instance.Status.ConnectionStatus = "Connected"
+			logger.Info("Periodic connection test successful",
+				"instance", instance.Name,
+				"hostname", instance.Spec.Hostname)
+		}
+
+		// Update status with new connection information
+		if err := r.Status().Update(ctx, instance); err != nil {
+			logger.Error(err, "Failed to update connection status")
+			return ctrl.Result{}, err
+		}
+
+		// If this is an external instance and connection failed, don't proceed with reconciliation
+		if connectionErr != nil && instance.Spec.ExternalInstance {
 			meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
 				Type:               "Ready",
 				Status:             metav1.ConditionFalse,
 				LastTransitionTime: metav1.Now(),
 				Reason:             "ConnectionFailed",
-				Message:            fmt.Sprintf("Failed to connect to external AWX instance: %v", err),
+				Message:            fmt.Sprintf("Failed to connect to external AWX instance: %v", connectionErr),
 			})
 
 			if err := r.Status().Update(ctx, instance); err != nil {
 				logger.Error(err, "Failed to update AWXInstance status")
 			}
 
-			return ctrl.Result{RequeueAfter: time.Minute}, err
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, connectionErr
 		}
+	} else {
+		// Test connection to AWX if we're not doing a periodic check
+		if err := r.testConnection(ctx, awxClient); err != nil {
+			logger.Error(err, "Failed to connect to AWX instance",
+				"instance", instance.Name,
+				"hostname", instance.Spec.Hostname,
+				"protocol", protocol,
+				"user", instance.Spec.AdminUser)
 
-		// For non-external instances, this may be expected during initial setup
-		logger.Info("AWX instance not available yet, will retry")
+			// If this is an external instance, we expect it to exist
+			if instance.Spec.ExternalInstance {
+				meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+					Type:               "Ready",
+					Status:             metav1.ConditionFalse,
+					LastTransitionTime: metav1.Now(),
+					Reason:             "ConnectionFailed",
+					Message:            fmt.Sprintf("Failed to connect to external AWX instance: %v", err),
+				})
+
+				if err := r.Status().Update(ctx, instance); err != nil {
+					logger.Error(err, "Failed to update AWXInstance status")
+				}
+
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+			}
+
+			// For non-external instances, this may be expected during initial setup
+			logger.Info("AWX instance not available yet, will retry")
+		}
 	}
 
 	// Check and reconcile any differences from AWX internal state to the desired state
 	if changed, err := r.reconcileInternalChanges(ctx, instance, awxClient); err != nil {
-		logger.Error(err, "Failed to reconcile internal AWX changes")
+		logger.Error(err, "Failed to reconcile internal AWX changes",
+			"instance", instance.Name,
+			"details", err.Error())
 		return ctrl.Result{RequeueAfter: time.Minute}, err
 	} else if changed {
-		logger.Info("Detected and corrected internal AWX changes")
+		logger.Info("Detected and corrected internal AWX changes", "instance", instance.Name)
 		// If changes were detected and corrected, update the status
 		if err := r.Status().Update(ctx, instance); err != nil {
 			logger.Error(err, "Failed to update AWXInstance status")
@@ -153,10 +223,13 @@ func (r *AWXInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Reconcile Projects
 	projectManager := awx.NewProjectManager(awxClient)
 	for _, projectSpec := range instance.Spec.Projects {
-		logger.Info("Reconciling project", "name", projectSpec.Name)
+		logger.Info("Reconciling project", "name", projectSpec.Name, "instance", instance.Name)
 		_, err := projectManager.EnsureProject(projectSpec)
 		if err != nil {
-			logger.Error(err, "Failed to reconcile project", "name", projectSpec.Name)
+			logger.Error(err, "Failed to reconcile project",
+				"name", projectSpec.Name,
+				"instance", instance.Name,
+				"details", err.Error())
 			instance.Status.ProjectStatuses[projectSpec.Name] = fmt.Sprintf("Failed: %v", err)
 
 			// Update reconciliation status
@@ -173,10 +246,13 @@ func (r *AWXInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Reconcile Inventories
 	inventoryManager := awx.NewInventoryManager(awxClient)
 	for _, inventorySpec := range instance.Spec.Inventories {
-		logger.Info("Reconciling inventory", "name", inventorySpec.Name)
+		logger.Info("Reconciling inventory", "name", inventorySpec.Name, "instance", instance.Name)
 		_, err := inventoryManager.EnsureInventory(inventorySpec)
 		if err != nil {
-			logger.Error(err, "Failed to reconcile inventory", "name", inventorySpec.Name)
+			logger.Error(err, "Failed to reconcile inventory",
+				"name", inventorySpec.Name,
+				"instance", instance.Name,
+				"details", err.Error())
 			instance.Status.InventoryStatuses[inventorySpec.Name] = fmt.Sprintf("Failed: %v", err)
 
 			// Update reconciliation status
@@ -193,10 +269,13 @@ func (r *AWXInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Reconcile Job Templates (after projects and inventories)
 	jobTemplateManager := awx.NewJobTemplateManager(awxClient)
 	for _, jobTemplateSpec := range instance.Spec.JobTemplates {
-		logger.Info("Reconciling job template", "name", jobTemplateSpec.Name)
+		logger.Info("Reconciling job template", "name", jobTemplateSpec.Name, "instance", instance.Name)
 		_, err := jobTemplateManager.EnsureJobTemplate(jobTemplateSpec)
 		if err != nil {
-			logger.Error(err, "Failed to reconcile job template", "name", jobTemplateSpec.Name)
+			logger.Error(err, "Failed to reconcile job template",
+				"name", jobTemplateSpec.Name,
+				"instance", instance.Name,
+				"details", err.Error())
 			instance.Status.JobTemplateStatuses[jobTemplateSpec.Name] = fmt.Sprintf("Failed: %v", err)
 
 			// Update reconciliation status
@@ -225,8 +304,8 @@ func (r *AWXInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
-	// Requeue every 60 seconds to ensure internal AWX state matches desired state
-	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+	// Requeue after 30 seconds to ensure connection tests run regularly
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
 // reconcileInternalChanges checks if AWX's internal state matches the desired state
@@ -365,8 +444,24 @@ func (r *AWXInstanceReconciler) testConnection(ctx context.Context, awxClient *a
 	// Use the client's TestConnection method
 	err := awxClient.TestConnection()
 	if err != nil {
-		logger.Error(err, "Failed to connect to AWX instance")
-		return err
+		// Parse the error message to provide more context
+		var errorDetails string
+		if strings.Contains(err.Error(), "failed to connect") {
+			errorDetails = "Network connectivity issue - check network routes and firewall rules"
+		} else if strings.Contains(err.Error(), "unexpected status code: 401") {
+			errorDetails = "Authentication failed - check username and password"
+		} else if strings.Contains(err.Error(), "unexpected status code: 404") {
+			errorDetails = "API endpoint not found - check AWX URL and API path"
+		} else if strings.Contains(err.Error(), "context deadline exceeded") ||
+			strings.Contains(err.Error(), "timeout") {
+			errorDetails = "Connection timed out - check if AWX service is running and network latency"
+		} else {
+			errorDetails = fmt.Sprintf("Unknown error: %v", err)
+		}
+
+		logger.Error(err, "Failed to connect to AWX instance",
+			"errorType", errorDetails)
+		return fmt.Errorf("%s: %w", errorDetails, err)
 	}
 
 	logger.Info("Successfully connected to AWX instance")
