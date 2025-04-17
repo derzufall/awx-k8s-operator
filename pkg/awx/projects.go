@@ -125,16 +125,57 @@ func (pm *ProjectManager) EnsureProject(projectSpec awxv1alpha1.ProjectSpec) (ma
 	if project == nil {
 		// Project doesn't exist, create it
 		log.Info("Creating AWX project", "name", projectSpec.Name)
-		return pm.client.CreateObject("projects", projectData)
+		project, err = pm.client.CreateObject("projects", projectData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create project: %w", err)
+		}
+
+		// Verify that we got a valid project back
+		if project == nil {
+			return nil, fmt.Errorf("received nil project after creation")
+		}
+
+		// Verify the project has the expected name
+		if name, ok := project["name"].(string); !ok || name != projectSpec.Name {
+			log.Error(nil, "Created project has unexpected name",
+				"expected", projectSpec.Name,
+				"actual", name,
+				"keys", getMapKeys(project))
+		}
+
+		// Verify the project has an ID
+		if _, ok := project["id"]; !ok {
+			log.Error(nil, "Created project missing ID field",
+				"name", projectSpec.Name,
+				"keys", getMapKeys(project))
+			return nil, fmt.Errorf("created project has no ID field")
+		}
+
+		// Log successful creation
+		id, _ := getObjectID(project)
+		log.Info("Successfully created AWX project", "name", projectSpec.Name, "id", id)
+
+		return project, nil
 	} else {
 		// Project exists, update it
 		id, err := getObjectID(project)
 		if err != nil {
-			return nil, err
+			log.Error(err, "Cannot get ID from existing project",
+				"name", projectSpec.Name,
+				"keys", getMapKeys(project))
+			return nil, fmt.Errorf("failed to get ID from existing project '%s': %w", projectSpec.Name, err)
 		}
 
 		log.Info("Updating AWX project", "name", projectSpec.Name, "id", id)
-		return pm.client.UpdateObject("projects", id, projectData)
+		project, err = pm.client.UpdateObject("projects", id, projectData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update project: %w", err)
+		}
+
+		// Log successful update
+		log.Info("Successfully updated AWX project", "name", projectSpec.Name, "id", id)
+
+		return project, nil
 	}
 }
 
