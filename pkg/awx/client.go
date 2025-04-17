@@ -40,12 +40,28 @@ func NewClient(baseURL, username, password string) *Client {
 
 // doRequest performs an HTTP request to the AWX API
 func (c *Client) doRequest(method, endpoint string, body interface{}) ([]byte, error) {
-	// Prepare URL
+	// Prepare URL, preserving query parameters
 	u, err := url.Parse(c.baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid base URL: %w", err)
 	}
-	u.Path = path.Join(u.Path, "api/v2", endpoint)
+
+	// Split endpoint and query params to avoid double escaping the query string
+	endpointPath := endpoint
+	queryString := ""
+
+	if idx := strings.Index(endpoint, "?"); idx >= 0 {
+		endpointPath = endpoint[:idx]
+		queryString = endpoint[idx+1:]
+	}
+
+	// Set path properly without losing query parameters
+	u.Path = path.Join(u.Path, "api/v2", endpointPath)
+
+	// Restore or set query string
+	if queryString != "" {
+		u.RawQuery = queryString
+	}
 
 	fullURL := u.String()
 
@@ -191,16 +207,30 @@ func (c *Client) GetObject(endpoint string, id int) (map[string]interface{}, err
 
 // ListObjects lists objects from the AWX API with optional filters
 func (c *Client) ListObjects(endpoint string, filters map[string]string) ([]map[string]interface{}, error) {
-	urlWithParams := endpoint
+	var requestEndpoint string
+
+	// Properly handle URL parameters without escaping the question mark
 	if len(filters) > 0 {
 		params := url.Values{}
 		for key, value := range filters {
 			params.Add(key, value)
 		}
-		urlWithParams = fmt.Sprintf("%s/?%s", endpoint, params.Encode())
+		// Separate the endpoint from the query string - don't include ? in the endpoint
+		requestEndpoint = fmt.Sprintf("%s", endpoint)
+
+		// The ? will be properly handled by url.Parse in doRequest
+		if strings.Contains(requestEndpoint, "?") {
+			// If endpoint already has query parameters, append with &
+			requestEndpoint = fmt.Sprintf("%s&%s", requestEndpoint, params.Encode())
+		} else {
+			// Otherwise append with ?
+			requestEndpoint = fmt.Sprintf("%s?%s", requestEndpoint, params.Encode())
+		}
+	} else {
+		requestEndpoint = endpoint
 	}
 
-	respBody, err := c.doRequest(http.MethodGet, urlWithParams, nil)
+	respBody, err := c.doRequest(http.MethodGet, requestEndpoint, nil)
 	if err != nil {
 		return nil, err
 	}
