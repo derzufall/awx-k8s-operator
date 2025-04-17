@@ -176,7 +176,7 @@ func (jtm *JobTemplateManager) EnsureJobTemplate(jobTemplateSpec awxv1alpha1.Job
 	if jobTemplate == nil {
 		// Job template doesn't exist, create it
 		log.Info("Creating AWX job template", "name", jobTemplateSpec.Name)
-		jobTemplate, err = jtm.client.CreateObject("job_templates", jobTemplateData)
+		jobTemplate, err = jtm.client.CreateObject("job_templates", jobTemplateData, "job_template")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create job template: %w", err)
 		}

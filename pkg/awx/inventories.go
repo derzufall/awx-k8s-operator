@@ -139,7 +139,7 @@ func (im *InventoryManager) EnsureInventory(inventorySpec awxv1alpha1.InventoryS
 	if inventory == nil {
 		// Inventory doesn't exist, create it
 		log.Info("Creating AWX inventory", "name", inventorySpec.Name, "organization", orgID)
-		inventory, err = im.client.CreateObject("inventories", inventoryData)
+		inventory, err = im.client.CreateObject("inventories", inventoryData, "inventory")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create inventory: %w", err)
 		}
@@ -251,7 +251,7 @@ func (im *InventoryManager) reconcileHosts(inventoryID int, desiredHosts []awxv1
 			log.Info("Creating AWX host",
 				"name", hostSpec.Name,
 				"inventory", inventoryID)
-			_, err := im.client.CreateObject("hosts", hostData)
+			_, err := im.client.CreateObject("hosts", hostData, "host")
 			if err != nil {
 				return fmt.Errorf("failed to create host %s: %w", hostSpec.Name, err)
 			}
