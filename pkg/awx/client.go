@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strings"
 	"time"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -46,19 +47,39 @@ func (c *Client) doRequest(method, endpoint string, body interface{}) ([]byte, e
 	}
 	u.Path = path.Join(u.Path, "api/v2", endpoint)
 
+	fullURL := u.String()
+
+	// Log the request details (before making the request)
+	requestID := fmt.Sprintf("%d", time.Now().UnixNano())
+	log.Info("REST API Request",
+		"requestID", requestID,
+		"method", method,
+		"url", fullURL)
+
 	// Prepare request body
 	var reqBody io.Reader
+	var bodyStr string
 	if body != nil {
 		jsonBody, err := json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal request body: %w", err)
 		}
+		bodyStr = string(jsonBody)
 		reqBody = bytes.NewReader(jsonBody)
+
+		// Log request body (if any)
+		log.Info("REST API Request Body",
+			"requestID", requestID,
+			"body", bodyStr)
 	}
 
 	// Create request
-	req, err := http.NewRequest(method, u.String(), reqBody)
+	req, err := http.NewRequest(method, fullURL, reqBody)
 	if err != nil {
+		log.Error(err, "Failed to create HTTP request",
+			"requestID", requestID,
+			"method", method,
+			"url", fullURL)
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -69,9 +90,28 @@ func (c *Client) doRequest(method, endpoint string, body interface{}) ([]byte, e
 	}
 	req.Header.Set("Accept", "application/json")
 
+	// Log all headers except Authorization (for security)
+	headers := make(map[string]string)
+	for name, values := range req.Header {
+		if name != "Authorization" {
+			headers[name] = strings.Join(values, ",")
+		}
+	}
+	log.Info("REST API Request Headers",
+		"requestID", requestID,
+		"headers", headers)
+
 	// Execute request
+	startTime := time.Now()
 	resp, err := c.httpClient.Do(req)
+	requestDuration := time.Since(startTime)
+
 	if err != nil {
+		log.Error(err, "REST API Request failed",
+			"requestID", requestID,
+			"method", method,
+			"url", fullURL,
+			"duration_ms", requestDuration.Milliseconds())
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -79,11 +119,53 @@ func (c *Client) doRequest(method, endpoint string, body interface{}) ([]byte, e
 	// Read response body
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Error(err, "Failed to read response body",
+			"requestID", requestID,
+			"method", method,
+			"url", fullURL)
 		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Always log response status, headers and duration
+	respHeaders := make(map[string]string)
+	for name, values := range resp.Header {
+		respHeaders[name] = strings.Join(values, ",")
+	}
+
+	log.Info("REST API Response",
+		"requestID", requestID,
+		"method", method,
+		"url", fullURL,
+		"status", resp.StatusCode,
+		"statusText", resp.Status,
+		"duration_ms", requestDuration.Milliseconds())
+
+	log.Info("REST API Response Headers",
+		"requestID", requestID,
+		"headers", respHeaders)
+
+	// Log response body - limit size if too large
+	respBodyStr := string(respBody)
+	if len(respBodyStr) > 1024 {
+		// Truncate long responses for logging
+		log.Info("REST API Response Body (truncated)",
+			"requestID", requestID,
+			"bodySize", len(respBodyStr),
+			"body", respBodyStr[:1024]+"...")
+	} else {
+		log.Info("REST API Response Body",
+			"requestID", requestID,
+			"body", respBodyStr)
 	}
 
 	// Check response status
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Error(nil, "REST API Request failed with error status",
+			"requestID", requestID,
+			"method", method,
+			"url", fullURL,
+			"status", resp.StatusCode,
+			"response", respBodyStr)
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
