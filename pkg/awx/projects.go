@@ -98,10 +98,20 @@ func (pm *ProjectManager) EnsureProject(projectSpec awxv1alpha1.ProjectSpec) (ma
 
 	// Map project spec to AWX API fields according to AWX API docs
 	projectData := map[string]interface{}{
-		"name":         projectSpec.Name,
-		"description":  projectSpec.Description,
-		"scm_type":     projectSpec.SCMType,
-		"organization": orgID,
+		"name":                            projectSpec.Name,
+		"description":                     projectSpec.Description,
+		"scm_type":                        projectSpec.SCMType,
+		"organization":                    orgID,
+		"scm_clean":                       false,
+		"scm_track_submodules":            false,
+		"scm_delete_on_update":            false,
+		"credential":                      nil,
+		"timeout":                         0,
+		"scm_update_on_launch":            false,
+		"scm_update_cache_timeout":        0,
+		"allow_override":                  false,
+		"default_environment":             nil,
+		"signature_validation_credential": nil,
 	}
 
 	// Only set SCM URL if provided and SCM type is not manual
@@ -112,6 +122,9 @@ func (pm *ProjectManager) EnsureProject(projectSpec awxv1alpha1.ProjectSpec) (ma
 	// Set SCM branch if provided
 	if projectSpec.SCMBranch != "" {
 		projectData["scm_branch"] = projectSpec.SCMBranch
+	} else if projectSpec.SCMType != "manual" {
+		// Use default branch if not specified but SCM is not manual
+		projectData["scm_branch"] = "main"
 	}
 
 	// Set SCM credential if provided
@@ -140,7 +153,7 @@ func (pm *ProjectManager) EnsureProject(projectSpec awxv1alpha1.ProjectSpec) (ma
 			"name", projectSpec.Name,
 			"organization", orgID,
 			"scm_type", projectSpec.SCMType)
-		project, err = pm.client.CreateObject("projects", projectData)
+		project, err = pm.client.CreateObject("projects", projectData, "project")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create project: %w", err)
 		}

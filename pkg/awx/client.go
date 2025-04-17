@@ -363,103 +363,144 @@ func (c *Client) ListObjects(endpoint string, filters map[string]string) ([]map[
 	return directResult, nil
 }
 
-// CreateObject creates an object in the AWX API
-func (c *Client) CreateObject(endpoint string, data map[string]interface{}) (map[string]interface{}, error) {
-	respBody, err := c.doRequest(http.MethodPost, endpoint, data)
+// Post performs a POST request to the AWX API
+func (c *Client) Post(endpoint string, body interface{}) (*http.Response, error) {
+	u, err := url.Parse(c.baseURL)
 	if err != nil {
+		return nil, fmt.Errorf("invalid base URL: %w", err)
+	}
+
+	// Set path properly
+	u.Path = path.Join(u.Path, "api/v2", endpoint)
+	fullURL := u.String()
+
+	// Marshal request body
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+	reqBody := bytes.NewReader(jsonBody)
+
+	// Create request
+	req, err := http.NewRequest(http.MethodPost, fullURL, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	// Execute request
+	return c.httpClient.Do(req)
+}
+
+// GetObjectByName retrieves an object from the AWX API by name
+func (c *Client) GetObjectByName(endpoint, name string) (map[string]interface{}, error) {
+	return c.FindObjectByName(endpoint, name)
+}
+
+// CreateObject creates an object in the AWX API
+func (c *Client) CreateObject(endpoint string, payload map[string]interface{}, expectedObj string) (map[string]interface{}, error) {
+	// Check if the object exists first
+	name, hasName := payload["name"]
+	if hasName {
+		log.Info("Checking if object exists before creation", "endpoint", endpoint, "name", name)
+		existing, err := c.GetObjectByName(endpoint, name.(string))
+		if err == nil && existing != nil {
+			log.Info("Object already exists, returning existing object", "endpoint", endpoint, "name", name)
+			return existing, nil
+		}
+	}
+
+	log.Info("Creating object", "endpoint", endpoint, "keys", getMapKeys(payload))
+	resp, err := c.Post(endpoint, payload)
+	if err != nil {
+		log.Error(err, "Failed to create object", "endpoint", endpoint)
 		return nil, err
 	}
 
-	// First try to parse as a direct object
-	var result map[string]interface{}
-	err = json.Unmarshal(respBody, &result)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		log.Error(nil, "Error response from AWX API",
+			"status", resp.Status,
+			"endpoint", endpoint,
+			"response", string(body))
+		return nil, fmt.Errorf("failed to create object: %s", resp.Status)
 	}
 
-	// Check if we already have a valid created object
-	if id, hasID := result["id"]; hasID {
-		log.Info("API returned direct object with ID",
-			"endpoint", endpoint,
-			"id", id)
-		return result, nil
+	result := make(map[string]interface{})
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Error(err, "Failed to decode response", "endpoint", endpoint)
+		return nil, err
 	}
 
-	// Check if the response has a 'results' array - some AWX endpoints return collections
-	if results, ok := result["results"].([]interface{}); ok && len(results) > 0 {
-		log.Info("API returned results array instead of direct object",
-			"endpoint", endpoint,
-			"count", len(results))
+	log.Info("Received response", "endpoint", endpoint, "status", resp.Status, "keys", getMapKeys(result))
 
-		// Get the name from the request data for matching
-		objectName, hasName := data["name"].(string)
+	// Handle the case where the API returns a collection instead of a direct object
+	if results, ok := result["results"].([]interface{}); ok {
+		log.Info("API returned a collection", "endpoint", endpoint, "count", len(results))
 
-		// First look for an exact match by name if we have a name in the request
+		// Try to find our newly created object in the results
 		if hasName {
+			nameStr := payload["name"].(string)
 			for _, item := range results {
 				if obj, ok := item.(map[string]interface{}); ok {
-					if name, ok := obj["name"].(string); ok && name == objectName {
-						log.Info("Found exact match for created object by name",
-							"endpoint", endpoint,
-							"name", objectName)
+					if objName, ok := obj["name"].(string); ok && objName == nameStr {
+						log.Info("Found newly created object in results", "endpoint", endpoint, "name", nameStr)
 						return obj, nil
 					}
 				}
 			}
-
-			// If we couldn't find a match by name, log it
-			log.Error(nil, "Could not find created object in results",
+			log.Error(nil, "Failed to find newly created object in results",
 				"endpoint", endpoint,
-				"name", objectName)
+				"name", nameStr,
+				"result_count", len(results))
+			return nil, fmt.Errorf("object creation failed: object not found in response")
 		}
 
-		// Per AWX documentation, we should make a separate request to find
-		// the newly created object by name
-		if hasName {
-			log.Info("Trying to find created object with separate request",
-				"endpoint", endpoint,
-				"name", objectName)
-
-			// Use a new request with filtering to get the created object
-			filters := map[string]string{"name": objectName}
-			objects, findErr := c.ListObjects(endpoint, filters)
-			if findErr != nil {
-				log.Error(findErr, "Failed to find created object",
-					"endpoint", endpoint,
-					"name", objectName)
-			} else if len(objects) > 0 {
-				log.Info("Found created object with separate request",
-					"endpoint", endpoint,
-					"name", objectName)
-				return objects[0], nil
-			} else {
-				log.Error(nil, "Object not found even with separate request",
-					"endpoint", endpoint,
-					"name", objectName)
-			}
-		}
-
-		// If all else fails, take the first object from the original results
-		// (though this might not be the object we created)
-		if len(results) > 0 {
-			if resultObj, ok := results[0].(map[string]interface{}); ok {
-				log.Info("Using first object from results as fallback",
-					"endpoint", endpoint)
-				return resultObj, nil
-			}
-		}
-
-		// This is a serious issue - can't find the object we tried to create
-		log.Error(nil, "Failed to extract object from results array",
-			"endpoint", endpoint)
-		return nil, fmt.Errorf("could not find created object in API response")
+		// If we don't have a name to search for, just return the result as is
+		return result, nil
 	}
 
-	// If we get here, the response format was unexpected
-	log.Error(nil, "Unexpected API response format",
-		"endpoint", endpoint,
-		"keys", getMapKeys(result))
-	return nil, fmt.Errorf("unexpected API response format")
+	// Check if the result has id, if not it's probably an error
+	if _, hasID := result["id"]; !hasID {
+		if hasName {
+			nameStr := payload["name"].(string)
+			log.Error(nil, "Failed to create object: response missing ID",
+				"endpoint", endpoint,
+				"name", nameStr,
+				"keys", getMapKeys(result))
+
+			// Verify if object was actually created despite missing ID in response
+			created, err := c.GetObjectByName(endpoint, nameStr)
+			if err == nil && created != nil {
+				log.Info("Object was actually created despite missing ID in response",
+					"endpoint", endpoint,
+					"name", nameStr)
+				return created, nil
+			}
+
+			return nil, fmt.Errorf("object creation failed: response missing ID")
+		}
+	}
+
+	// For objects with types, verify expected type
+	if expectedObj != "" {
+		if typeStr, ok := result["type"].(string); ok {
+			if typeStr != expectedObj {
+				log.Error(nil, "Object created with unexpected type",
+					"endpoint", endpoint,
+					"expected", expectedObj,
+					"got", typeStr)
+				return nil, fmt.Errorf("object created with unexpected type: %s (expected %s)", typeStr, expectedObj)
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // UpdateObject updates an object in the AWX API
