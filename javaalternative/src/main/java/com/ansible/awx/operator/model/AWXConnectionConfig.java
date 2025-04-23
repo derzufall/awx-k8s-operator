@@ -6,23 +6,20 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Specification for an AWX Project.
+ * Configuration for AWX connection derived from CRD.
  */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class ProjectSpec {
-    private String name;
-    private String description;
+public class AWXConnectionConfig {
+    private String url;
+    private String username;
+    private String password;
     
     @Builder.Default
-    private String scmType = "git";
-    
-    private String scmUrl;
+    private Boolean validateCerts = true;
     
     @Builder.Default
-    private String scmBranch = "main";
-    
-    private String scmCredential;
+    private Integer timeout = 60;
 } 

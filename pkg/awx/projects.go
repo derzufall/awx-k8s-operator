@@ -102,6 +102,8 @@ func (pm *ProjectManager) EnsureProject(projectSpec awxv1alpha1.ProjectSpec) (ma
 		"description":                     projectSpec.Description,
 		"scm_type":                        projectSpec.SCMType,
 		"organization":                    orgID,
+		"local_path":                      "",
+		"scm_refspec":                     "",
 		"scm_clean":                       false,
 		"scm_track_submodules":            false,
 		"scm_delete_on_update":            false,

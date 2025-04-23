@@ -403,17 +403,7 @@ func (c *Client) GetObjectByName(endpoint, name string) (map[string]interface{},
 
 // CreateObject creates an object in the AWX API
 func (c *Client) CreateObject(endpoint string, payload map[string]interface{}, expectedObj string) (map[string]interface{}, error) {
-	// Check if the object exists first
-	name, hasName := payload["name"]
-	if hasName {
-		log.Info("Checking if object exists before creation", "endpoint", endpoint, "name", name)
-		existing, err := c.GetObjectByName(endpoint, name.(string))
-		if err == nil && existing != nil {
-			log.Info("Object already exists, returning existing object", "endpoint", endpoint, "name", name)
-			return existing, nil
-		}
-	}
-
+	// Directly try to create the object with POST without checking if it exists first
 	log.Info("Creating object", "endpoint", endpoint, "keys", getMapKeys(payload))
 	resp, err := c.Post(endpoint, payload)
 	if err != nil {
@@ -444,19 +434,18 @@ func (c *Client) CreateObject(endpoint string, payload map[string]interface{}, e
 		log.Info("API returned a collection", "endpoint", endpoint, "count", len(results))
 
 		// Try to find our newly created object in the results
-		if hasName {
-			nameStr := payload["name"].(string)
+		if name, ok := payload["name"].(string); ok {
 			for _, item := range results {
 				if obj, ok := item.(map[string]interface{}); ok {
-					if objName, ok := obj["name"].(string); ok && objName == nameStr {
-						log.Info("Found newly created object in results", "endpoint", endpoint, "name", nameStr)
+					if objName, ok := obj["name"].(string); ok && objName == name {
+						log.Info("Found newly created object in results", "endpoint", endpoint, "name", name)
 						return obj, nil
 					}
 				}
 			}
 			log.Error(nil, "Failed to find newly created object in results",
 				"endpoint", endpoint,
-				"name", nameStr,
+				"name", name,
 				"result_count", len(results))
 			return nil, fmt.Errorf("object creation failed: object not found in response")
 		}
@@ -467,22 +456,13 @@ func (c *Client) CreateObject(endpoint string, payload map[string]interface{}, e
 
 	// Check if the result has id, if not it's probably an error
 	if _, hasID := result["id"]; !hasID {
-		if hasName {
-			nameStr := payload["name"].(string)
+		if name, ok := payload["name"].(string); ok {
 			log.Error(nil, "Failed to create object: response missing ID",
 				"endpoint", endpoint,
-				"name", nameStr,
+				"name", name,
 				"keys", getMapKeys(result))
 
-			// Verify if object was actually created despite missing ID in response
-			created, err := c.GetObjectByName(endpoint, nameStr)
-			if err == nil && created != nil {
-				log.Info("Object was actually created despite missing ID in response",
-					"endpoint", endpoint,
-					"name", nameStr)
-				return created, nil
-			}
-
+			// Just return the error instead of making additional GET requests
 			return nil, fmt.Errorf("object creation failed: response missing ID")
 		}
 	}
@@ -584,16 +564,7 @@ func (c *Client) DeleteObject(endpoint string, id int) error {
 		}
 	}
 
-	// Verify the object was actually deleted
-	verifyObj, verifyErr := c.GetObject(endpoint, id)
-	if verifyErr == nil && verifyObj != nil {
-		// Object still exists
-		log.Error(nil, "Object still exists after deletion attempt",
-			"endpoint", endpoint,
-			"id", id)
-		return fmt.Errorf("object still exists after deletion attempt")
-	}
-
+	// Assume delete was successful if we reach this point
 	log.Info("Successfully deleted object",
 		"endpoint", endpoint,
 		"id", id)
